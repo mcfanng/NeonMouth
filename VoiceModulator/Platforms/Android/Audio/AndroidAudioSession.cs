@@ -49,6 +49,9 @@ sealed class AndroidAudioSession : IAudioSession
             output is null ? "No wired headphones" : $"Wired headphones ({output.ProductName})");
     }
 
+    public (float Input, float Output) GetLevels() =>
+        _engine.IsRunning && _engine.Processor is { } p ? (p.InputPeak, p.OutputPeak) : (0f, 0f);
+
     public async Task<bool> RequestPermissionsAsync()
     {
         var mic = await Permissions.RequestAsync<Permissions.Microphone>();

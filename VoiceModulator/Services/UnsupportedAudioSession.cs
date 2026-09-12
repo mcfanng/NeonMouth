@@ -10,6 +10,7 @@ sealed class UnsupportedAudioSession : IAudioSession
     public event EventHandler? DevicesChanged { add { } remove { } }
 
     public DeviceAvailability GetAvailability() => new(false, false, "Unavailable", "Unavailable");
+    public (float Input, float Output) GetLevels() => (0, 0);
     public Task<bool> RequestPermissionsAsync() => Task.FromResult(false);
     public Task StartAsync(SessionSettings settings) => Task.CompletedTask;
     public void Stop() { }

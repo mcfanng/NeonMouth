@@ -46,6 +46,13 @@
                         FontSize="20" HeightRequest="60" />
 
                 <Label Text="{Binding StatusText}" HorizontalOptions="Center" />
+
+                <VerticalStackLayout Spacing="4">
+                    <Label Text="Mic level" FontSize="12" />
+                    <ProgressBar Progress="{Binding InputLevel}" />
+                    <Label Text="Output level" FontSize="12" />
+                    <ProgressBar Progress="{Binding OutputLevel}" />
+                </VerticalStackLayout>
             </VerticalStackLayout>
         </ScrollView>
 

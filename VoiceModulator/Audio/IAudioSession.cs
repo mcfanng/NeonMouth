@@ -30,6 +30,9 @@ public interface IAudioSession
 
     DeviceAvailability GetAvailability();
 
+    /// <summary>Current input/output peak levels (0..1) while running; zeros otherwise.</summary>
+    (float Input, float Output) GetLevels();
+
     Task<bool> RequestPermissionsAsync();
 
     Task StartAsync(SessionSettings settings);

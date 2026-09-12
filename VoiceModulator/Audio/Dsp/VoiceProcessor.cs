@@ -15,6 +15,10 @@ public sealed class VoiceProcessor
     public float InputGain { get; set; } = 1.5f;
     public float Intensity { get; set; } = 0.7f;
 
+    /// <summary>Peak levels of the last block (0..1), for the UI level meters.</summary>
+    public float InputPeak { get; private set; }
+    public float OutputPeak { get; private set; }
+
     public VoiceProcessor(int sampleRate)
     {
         _effects = Enum.GetValues<VoiceEffectKind>()
@@ -39,10 +43,36 @@ public sealed class VoiceProcessor
         }
 
         float gain = InputGain;
-        for (int i = 0; i < block.Length; i++) block[i] *= gain;
+        float inPeak = 0f;
+        for (int i = 0; i < block.Length; i++)
+        {
+            block[i] *= gain;
+            inPeak = MathF.Max(inPeak, MathF.Abs(block[i]));
+        }
+        InputPeak = inPeak;
 
-        _effects[_currentIndex].Process(block, Math.Clamp(Intensity, 0f, 1f));
+        var effect = _effects[_currentIndex];
+        effect.Process(block, Math.Clamp(Intensity, 0f, 1f));
+
+        // A NaN/Inf would permanently poison filter and limiter state (silence until restart),
+        // so detect it, drop the block and reset the chain.
+        float outPeak = 0f;
+        for (int i = 0; i < block.Length; i++)
+        {
+            float v = block[i];
+            if (!float.IsFinite(v))
+            {
+                block.Clear();
+                effect.Reset();
+                Limiter.Reset();
+                OutputPeak = 0f;
+                return;
+            }
+        }
+
         Limiter.Process(block);
+        for (int i = 0; i < block.Length; i++) outPeak = MathF.Max(outPeak, MathF.Abs(block[i]));
+        OutputPeak = outPeak;
     }
 
     public void Reset()

@@ -37,6 +37,7 @@ public sealed class OutputLimiter
             if (target < _envelopeGain) _envelopeGain = target;
             else _envelopeGain = target + (_envelopeGain - target) * _releaseCoeff;
 
+            if (!float.IsFinite(_envelopeGain)) _envelopeGain = 1f;
             s *= _envelopeGain;
             block[i] = Math.Clamp(s, -HardCeiling, HardCeiling);
         }

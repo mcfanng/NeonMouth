@@ -33,6 +33,9 @@ public partial class MainViewModel : ObservableObject
     public bool HasBlockingMessage => BlockingMessage is not null;
     [ObservableProperty] bool _showDisclosure;
 
+    [ObservableProperty] double _inputLevel;
+    [ObservableProperty] double _outputLevel;
+
     public string StartStopText => IsRunning ? "Stop" : "Start";
 
     public MainViewModel(IAudioSession session)
@@ -47,6 +50,15 @@ public partial class MainViewModel : ObservableObject
         _session.DevicesChanged += (_, _) => MainThread.BeginInvokeOnMainThread(Rescan);
         ApplyStatus(_session.Status);
         Rescan();
+
+        // Level meters: poll a few times a second rather than pushing from the audio thread.
+        Application.Current?.Dispatcher.StartTimer(TimeSpan.FromMilliseconds(100), () =>
+        {
+            var (input, output) = _session.GetLevels();
+            InputLevel = input;
+            OutputLevel = output;
+            return true;
+        });
     }
 
     SessionSettings CurrentSettings => new(SelectedEffect, (float)Intensity, (float)OutputGain);
