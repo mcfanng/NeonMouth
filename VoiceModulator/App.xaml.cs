@@ -1,17 +1,16 @@
-﻿using Microsoft.Extensions.DependencyInjection;
+namespace VoiceModulator;
 
-namespace VoiceModulator
+public partial class App : Application
 {
-    public partial class App : Application
+    public App()
     {
-        public App()
-        {
-            InitializeComponent();
-        }
+        InitializeComponent();
+    }
 
-        protected override Window CreateWindow(IActivationState? activationState)
-        {
-            return new Window(new AppShell());
-        }
+    protected override Window CreateWindow(IActivationState? activationState)
+    {
+        if (OperatingSystem.IsAndroid() && !OperatingSystem.IsAndroidVersionAtLeast(31))
+            return new Window(new UnsupportedPage());
+        return new Window(new AppShell());
     }
 }
