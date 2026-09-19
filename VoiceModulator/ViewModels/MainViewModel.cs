@@ -284,11 +284,16 @@ public partial class MainViewModel : ObservableObject
     void DismissPendingDevice() => PendingDevice = null;
 
     /// <summary>
-    /// Confirms before leaving the app, so a stray Picker selection can't bounce the user into
-    /// Bluetooth settings on its own.
+    /// Sends the user to Bluetooth settings to reactivate a speaker. The first time for a given
+    /// speaker it explains why first; speakers seen before go straight to settings.
     /// </summary>
     async Task PromptActivationAsync(AudioDevice device)
     {
+        if (IsKnownBluetoothOutput(device.Key))
+        {
+            StartActivation(device);
+            return;
+        }
         if (_activationPrompting || Application.Current?.Windows.FirstOrDefault()?.Page is not { } page) return;
         _activationPrompting = true;
         try
@@ -297,11 +302,7 @@ public partial class MainViewModel : ObservableObject
             bool open = await page.DisplayAlertAsync("Switch to " + name + "?",
                 $"Android is no longer sending audio to {name}. Open Bluetooth settings and tap {name} to switch back to it, then return here.",
                 "Open", "Cancel");
-            if (open)
-            {
-                _awaitingActivationKey = device.Key;
-                _session.RequestActivation(device);
-            }
+            if (open) StartActivation(device);
         }
         finally
         {
@@ -357,9 +358,29 @@ public partial class MainViewModel : ObservableObject
             ?? outputs.FirstOrDefault(d => d.IsBluetooth);
     }
 
+    void StartActivation(AudioDevice device)
+    {
+        MarkKnownBluetoothOutput(device.Key);
+        _awaitingActivationKey = device.Key;
+        _session.RequestActivation(device);
+    }
+
     static void RememberOutput(AudioDevice output)
     {
-        if (output.IsBluetooth) Preferences.Default.Set(SettingsKeys.LastBluetoothOutput, output.Key);
+        if (!output.IsBluetooth) return;
+        Preferences.Default.Set(SettingsKeys.LastBluetoothOutput, output.Key);
+        MarkKnownBluetoothOutput(output.Key);
+    }
+
+    static string[] KnownBluetoothOutputs() =>
+        Preferences.Default.Get(SettingsKeys.KnownBluetoothOutputs, "").Split('|', StringSplitOptions.RemoveEmptyEntries);
+
+    static bool IsKnownBluetoothOutput(string key) => KnownBluetoothOutputs().Contains(key);
+
+    static void MarkKnownBluetoothOutput(string key)
+    {
+        if (!IsKnownBluetoothOutput(key))
+            Preferences.Default.Set(SettingsKeys.KnownBluetoothOutputs, string.Join('|', KnownBluetoothOutputs().Append(key)));
     }
 
     static int IndexOf(IReadOnlyList<AudioDevice> list, AudioDevice? device)
