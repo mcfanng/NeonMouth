@@ -63,8 +63,20 @@ public partial class MainViewModel : ObservableObject
 
     SessionSettings CurrentSettings => new(SelectedEffect, (float)Intensity, (float)OutputGain);
 
+    // Picker binds by index: SelectedItem-to-enum binding silently failed to update SelectedEffect.
+    public int SelectedEffectIndex
+    {
+        get => (int)SelectedEffect;
+        set
+        {
+            if (value >= 0 && value < Effects.Count) SelectedEffect = Effects[value];
+        }
+    }
+
     partial void OnSelectedEffectChanged(VoiceEffectKind value)
     {
+        System.Diagnostics.Debug.WriteLine($"VoiceModulator: effect -> {value}");
+        OnPropertyChanged(nameof(SelectedEffectIndex));
         Preferences.Default.Set(SettingsKeys.Effect, value.ToString());
         _session?.Update(CurrentSettings);
     }

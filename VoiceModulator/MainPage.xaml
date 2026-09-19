@@ -27,7 +27,7 @@
 
                 <VerticalStackLayout Spacing="6">
                     <Label Text="Voice effect" FontAttributes="Bold" />
-                    <Picker ItemsSource="{Binding Effects}" SelectedItem="{Binding SelectedEffect}" />
+                    <Picker ItemsSource="{Binding Effects}" SelectedIndex="{Binding SelectedEffectIndex}" />
                 </VerticalStackLayout>
 
                 <VerticalStackLayout Spacing="2">

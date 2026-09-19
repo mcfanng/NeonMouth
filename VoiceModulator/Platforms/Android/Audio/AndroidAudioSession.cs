@@ -127,6 +127,7 @@ sealed class AndroidAudioSession : IAudioSession
         var p = _engine.Processor;
         if (p is null) return;
         p.Effect = _settings.Effect;
+        global::Android.Util.Log.Info("VoiceModulator", $"ApplySettings effect={_settings.Effect}");
         p.Intensity = _settings.Intensity;
         p.Limiter.UserGain = _settings.OutputGain;
     }
