@@ -1,0 +1,36 @@
+name: Build
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: microsoft
+          java-version: '17'
+
+      - name: Install MAUI Android workload
+        run: dotnet workload install maui-android
+
+      - name: Build
+        run: dotnet build VoiceModulator/VoiceModulator.csproj -f net10.0-android -c Release
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: voicemodulator-android
+          path: VoiceModulator/bin/Release/net10.0-android/**/*-Signed.apk
+          if-no-files-found: warn
