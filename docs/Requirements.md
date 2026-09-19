@@ -1,4 +1,4 @@
-# Android Voice Modulator App — Requirements Document (v2)
+# NeonMouth (Android Voice Modulator App) — Requirements Document (v2)
 
 **Platform:** .NET MAUI (Android target) · **Status:** Ready for implementation handoff · Supersedes v1 (Copilot draft)
 
