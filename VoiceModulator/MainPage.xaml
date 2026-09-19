@@ -13,11 +13,30 @@
                 <Border Padding="14" StrokeShape="RoundRectangle 10">
                     <VerticalStackLayout Spacing="6">
                         <Label Text="Devices" FontAttributes="Bold" FontSize="16" />
-                        <Label Text="{Binding InputName, StringFormat='Input: {0}'}" />
-                        <Label Text="{Binding OutputName, StringFormat='Output: {0}'}" />
-                        <Label Text="Phone mic + wired headphones is the recommended, lowest-latency setup."
-                               FontSize="12" TextColor="{StaticResource Gray500}" />
+                        <Label Text="Input" FontSize="12" />
+                        <Picker ItemsSource="{Binding InputNames}" SelectedIndex="{Binding SelectedInputIndex}" />
+                        <Label Text="Auto-selected" FontSize="12" TextColor="{StaticResource Gray500}"
+                               IsVisible="{Binding InputAutoSelected}" />
+                        <Label Text="Output" FontSize="12" />
+                        <Picker x:Name="OutputPicker" ItemsSource="{Binding OutputNames}"
+                                SelectedIndex="{Binding SelectedOutputIndex, Mode=OneWay}"
+                                SelectedIndexChanged="OnOutputPickerChanged" />
+                        <Label Text="Auto-selected" FontSize="12" TextColor="{StaticResource Gray500}"
+                               IsVisible="{Binding OutputAutoSelected}" />
+                        <Label Text="✓ Recommended: phone mic + wired headphones (lowest latency)."
+                               FontSize="12" TextColor="SeaGreen" IsVisible="{Binding IsRecommendedSetup}" />
                         <Button Text="Rescan" Command="{Binding RescanCommand}" HorizontalOptions="Start" />
+                    </VerticalStackLayout>
+                </Border>
+
+                <!-- Non-blocking "new device — switch?" prompt (§2.5). -->
+                <Border Padding="14" StrokeShape="RoundRectangle 10" IsVisible="{Binding HasPendingDevice}">
+                    <VerticalStackLayout Spacing="8">
+                        <Label Text="{Binding PendingDeviceText}" />
+                        <HorizontalStackLayout Spacing="8">
+                            <Button Text="Switch" Command="{Binding AcceptPendingDeviceCommand}" />
+                            <Button Text="Dismiss" Command="{Binding DismissPendingDeviceCommand}" />
+                        </HorizontalStackLayout>
                     </VerticalStackLayout>
                 </Border>
 
@@ -62,7 +81,7 @@
                     BackgroundColor="{AppThemeBinding Light=White, Dark={StaticResource Gray900}}">
                 <VerticalStackLayout Spacing="12">
                     <Label Text="How the microphone is used" FontSize="18" FontAttributes="Bold" />
-                    <Label Text="Voice Modulator uses your microphone only to change your voice in real time and play it through your headphones or speaker. Audio is never recorded, stored, or sent over the network. It keeps running with the screen off after you press Start, shown by a notification, until you press Stop." />
+                    <Label Text="Voice Modulator uses your microphone only to change your voice in real time and play it through your headphones or speaker. Audio is never recorded, stored, or sent over the network. It keeps running with the screen off after you press Start, until you press Stop." />
                     <Button Text="Got it" Command="{Binding AcceptDisclosureCommand}" />
                 </VerticalStackLayout>
             </Border>

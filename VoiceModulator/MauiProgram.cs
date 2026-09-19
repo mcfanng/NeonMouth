@@ -21,6 +21,15 @@ public static class MauiProgram
         builder.Services.AddSingleton<MainViewModel>();
         builder.Services.AddTransient<MainPage>();
 
+#if ANDROID
+        // No system touch clicks on the app's controls: the mic can pick them up mid-session.
+        Microsoft.Maui.Handlers.ViewHandler.ViewMapper.AppendToMapping("NoTouchSounds",
+            (handler, _) =>
+            {
+                if (handler.PlatformView is Android.Views.View view) view.SoundEffectsEnabled = false;
+            });
+#endif
+
 #if DEBUG
         builder.Logging.AddDebug();
 #endif

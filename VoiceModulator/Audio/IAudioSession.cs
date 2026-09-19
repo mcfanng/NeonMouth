@@ -11,7 +11,27 @@ public enum SessionState
     Error,
 }
 
-public sealed record DeviceAvailability(bool HasInput, bool HasOutput, string InputName, string OutputName);
+public enum AudioDeviceKind
+{
+    BuiltInMic,
+    WiredMic,
+    WiredOutput,
+    BluetoothSpeaker,
+}
+
+/// <summary>
+/// A selectable input or output. <see cref="Id"/> is only valid while connected; <see cref="Key"/>
+/// is stable across reconnects and is what gets persisted (e.g. last-used Bluetooth speaker).
+/// <see cref="NeedsActivation"/> marks a Bluetooth speaker that is connected but not the OS's active
+/// audio device (e.g. after wired headphones took over); it can't be opened until reactivated.
+/// </summary>
+public sealed record AudioDevice(int Id, string Key, string Name, AudioDeviceKind Kind, bool NeedsActivation = false)
+{
+    public bool IsBluetooth => Kind == AudioDeviceKind.BluetoothSpeaker;
+}
+
+/// <summary>Currently connected candidates. The phone's own speaker is never in <see cref="Outputs"/> (§1.1).</summary>
+public sealed record DeviceList(IReadOnlyList<AudioDevice> Inputs, IReadOnlyList<AudioDevice> Outputs, bool HasMicPermission);
 
 public sealed record SessionSettings(VoiceEffectKind Effect, float Intensity, float OutputGain);
 
@@ -28,14 +48,23 @@ public interface IAudioSession
     /// <summary>Raised on an arbitrary thread when audio devices are added or removed.</summary>
     event EventHandler? DevicesChanged;
 
-    DeviceAvailability GetAvailability();
+    DeviceList GetDevices();
 
     /// <summary>Current input/output peak levels (0..1) while running; zeros otherwise.</summary>
     (float Input, float Output) GetLevels();
 
     Task<bool> RequestPermissionsAsync();
 
-    Task StartAsync(SessionSettings settings);
+    Task StartAsync(SessionSettings settings, AudioDevice input, AudioDevice output);
+
+    /// <summary>
+    /// Opens the OS UI where the user can make an inactive device (<see cref="AudioDevice.NeedsActivation"/>)
+    /// active again; apps can't do that themselves. <see cref="DevicesChanged"/> fires once it is.
+    /// </summary>
+    void RequestActivation(AudioDevice device);
+
+    /// <summary>Moves a running session to different devices (restarts the streams).</summary>
+    void SwitchDevices(AudioDevice input, AudioDevice output);
 
     void Stop();
 
