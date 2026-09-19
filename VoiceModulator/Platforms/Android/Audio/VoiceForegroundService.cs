@@ -12,7 +12,7 @@ namespace VoiceModulator.Platforms.Android.Audio;
 
 /// <summary>Keeps capture/processing alive with the screen off (§2.4, §3.3).</summary>
 [SupportedOSPlatform("android31.0")]
-[Service(Exported = false, ForegroundServiceType = ForegroundService.TypeMicrophone)]
+[Service(Exported = false, ForegroundServiceType = ForegroundService.TypeMicrophone | ForegroundService.TypeConnectedDevice)]
 sealed class VoiceForegroundService : Service
 {
     public const string ActionStart = "com.voicemodulator.START";
@@ -35,7 +35,7 @@ sealed class VoiceForegroundService : Service
 
         _instance = this;
         EnsureChannel();
-        StartForeground(NotificationId, BuildNotification(session.Status), ForegroundService.TypeMicrophone);
+        StartForeground(NotificationId, BuildNotification(session.Status), ForegroundTypes(session));
 
         session.StatusChanged -= OnStatusChanged;
         session.StatusChanged += OnStatusChanged;
@@ -44,6 +44,16 @@ sealed class VoiceForegroundService : Service
         if (session.Status.State != SessionState.Running) Shutdown(session.Status);
         return StartCommandResult.NotSticky;
     }
+
+    /// <summary>
+    /// connectedDevice applies to a Bluetooth output, but from API 34 it throws unless a Bluetooth
+    /// permission is granted, so it's only added when it can be.
+    /// </summary>
+    static ForegroundService ForegroundTypes(AndroidAudioSession session) =>
+        session.CurrentOutput?.IsBluetooth == true
+            && AndroidAudioSession.HasPermission(global::Android.Manifest.Permission.BluetoothConnect)
+            ? ForegroundService.TypeMicrophone | ForegroundService.TypeConnectedDevice
+            : ForegroundService.TypeMicrophone;
 
     public override void OnDestroy()
     {
