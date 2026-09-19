@@ -15,6 +15,8 @@ public enum AudioDeviceKind
 {
     BuiltInMic,
     WiredMic,
+    /// <summary>Bluetooth headset mic (HFP/SCO or LE Audio). Never auto-selected.</summary>
+    BluetoothMic,
     WiredOutput,
     BluetoothSpeaker,
 }

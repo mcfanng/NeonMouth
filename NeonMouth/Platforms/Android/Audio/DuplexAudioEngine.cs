@@ -31,7 +31,8 @@ sealed unsafe class DuplexAudioEngine : IDisposable
     /// <summary>Raised on an AAudio-owned thread when a stream reports an error (e.g. device disconnected).</summary>
     public event Action<int>? StreamError;
 
-    public void Start(int inputDeviceId, int outputDeviceId)
+    /// <param name="inputPreset">Bluetooth SCO mics only capture with a voice-communication preset.</param>
+    public void Start(int inputDeviceId, int outputDeviceId, int inputPreset = InputPresetVoicePerformance)
     {
         if (IsRunning) throw new InvalidOperationException("Engine already running.");
         _selfHandle = GCHandle.Alloc(this);
@@ -44,7 +45,7 @@ sealed unsafe class DuplexAudioEngine : IDisposable
             AAudioStream_setBufferSizeInFrames(_output, FramesPerBurst * 2);
 
             // Input opened at the output's rate so no resampling happens on our side.
-            _input = OpenInput(inputDeviceId, SampleRate);
+            _input = OpenInput(inputDeviceId, SampleRate, inputPreset);
 
             // Generous scratch so an oversized callback never forces an allocation.
             _scratch = new float[Math.Max(FramesPerBurst, 256) * 8];
@@ -73,6 +74,10 @@ sealed unsafe class DuplexAudioEngine : IDisposable
         if (_selfHandle.IsAllocated) _selfHandle.Free();
     }
 
+    /// <summary>Device IDs AAudio actually opened (may differ from the requested ones).</summary>
+    public (int Input, int Output) ActualDeviceIds =>
+        (_input == 0 ? 0 : AAudioStream_getDeviceId(_input), _output == 0 ? 0 : AAudioStream_getDeviceId(_output));
+
     public void Dispose() => Stop();
 
     nint OpenOutput(int deviceId)
@@ -95,7 +100,7 @@ sealed unsafe class DuplexAudioEngine : IDisposable
         finally { AAudioStreamBuilder_delete(b); }
     }
 
-    nint OpenInput(int deviceId, int sampleRate)
+    nint OpenInput(int deviceId, int sampleRate, int inputPreset)
     {
         Check(AAudio_createStreamBuilder(out var b), "create builder");
         try
@@ -107,7 +112,7 @@ sealed unsafe class DuplexAudioEngine : IDisposable
             AAudioStreamBuilder_setSampleRate(b, sampleRate);
             AAudioStreamBuilder_setSharingMode(b, SharingModeExclusive);
             AAudioStreamBuilder_setPerformanceMode(b, PerformanceModeLowLatency);
-            AAudioStreamBuilder_setInputPreset(b, InputPresetVoicePerformance);
+            AAudioStreamBuilder_setInputPreset(b, inputPreset);
             AAudioStreamBuilder_setErrorCallback(b, &OnError, GCHandle.ToIntPtr(_selfHandle));
             Check(AAudioStreamBuilder_openStream(b, out var stream), "open input");
             return stream;
