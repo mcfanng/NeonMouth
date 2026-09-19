@@ -15,6 +15,8 @@ public enum AudioDeviceKind
 {
     BuiltInMic,
     WiredMic,
+    /// <summary>USB mic or wireless-mic receiver (its own radio, not Bluetooth).</summary>
+    UsbMic,
     /// <summary>Bluetooth headset mic (HFP/SCO or LE Audio). Never auto-selected.</summary>
     BluetoothMic,
     WiredOutput,
@@ -26,10 +28,15 @@ public enum AudioDeviceKind
 /// is stable across reconnects and is what gets persisted (e.g. last-used Bluetooth speaker).
 /// <see cref="NeedsActivation"/> marks a Bluetooth speaker that is connected but not the OS's active
 /// audio device (e.g. after wired headphones took over); it can't be opened until reactivated.
+/// <see cref="BluetoothAddress"/> identifies the physical device, so a headset's mic and its speaker
+/// can be matched. <see cref="IsLoudspeaker"/> marks a Bluetooth device that plays out loud (as
+/// opposed to headphones/earbuds), i.e. one whose own mic would feed back.
 /// </summary>
-public sealed record AudioDevice(int Id, string Key, string Name, AudioDeviceKind Kind, bool NeedsActivation = false)
+public sealed record AudioDevice(int Id, string Key, string Name, AudioDeviceKind Kind, bool NeedsActivation = false,
+    string? BluetoothAddress = null, bool IsLoudspeaker = false)
 {
     public bool IsBluetooth => Kind == AudioDeviceKind.BluetoothSpeaker;
+    public bool IsBluetoothMic => Kind == AudioDeviceKind.BluetoothMic;
 }
 
 /// <summary>Currently connected candidates. The phone's own speaker is never in <see cref="Outputs"/> (§1.1).</summary>
@@ -54,6 +61,9 @@ public interface IAudioSession
 
     /// <summary>Current input/output peak levels (0..1) while running; zeros otherwise.</summary>
     (float Input, float Output) GetLevels();
+
+    /// <summary>True while howling protection is reducing the output (§4.1 protection indicator).</summary>
+    bool IsFeedbackProtectionActive { get; }
 
     Task<bool> RequestPermissionsAsync();
 

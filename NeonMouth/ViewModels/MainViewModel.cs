@@ -28,13 +28,31 @@ public partial class MainViewModel : ObservableObject
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(SelectedInputIndex), nameof(IsRecommendedSetup))]
-    [NotifyCanExecuteChangedFor(nameof(ToggleCommand))]
     AudioDevice? _selectedInput;
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(SelectedOutputIndex), nameof(IsRecommendedSetup))]
-    [NotifyCanExecuteChangedFor(nameof(ToggleCommand))]
     AudioDevice? _selectedOutput;
+
+    /// <summary>Why the selected mic + output can't be used together, or null (§1.1, §4.1).</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasPairingProblem))]
+    string? _pairingProblem;
+
+    public bool HasPairingProblem => PairingProblem is not null;
+
+    /// <summary>Non-blocking advice about the selected pairing (feedback risk, call-quality audio).</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasPairingWarning))]
+    string? _pairingWarning;
+
+    public bool HasPairingWarning => PairingWarning is not null;
+
+    /// <summary>Only the feedback warning can be dismissed (one-time, §4.1).</summary>
+    [ObservableProperty] bool _canDismissPairingWarning;
+
+    /// <summary>Howling protection is currently reducing the volume (§4.1 indicator).</summary>
+    [ObservableProperty] bool _feedbackProtectionActive;
 
     [ObservableProperty] bool _inputAutoSelected;
     [ObservableProperty] bool _outputAutoSelected;
@@ -88,6 +106,7 @@ public partial class MainViewModel : ObservableObject
             var (input, output) = _session.GetLevels();
             InputLevel = input;
             OutputLevel = output;
+            FeedbackProtectionActive = _session.IsFeedbackProtectionActive;
             return true;
         });
     }
@@ -142,6 +161,53 @@ public partial class MainViewModel : ObservableObject
         OutputAutoSelected = false;
         ApplyDeviceChoice();
         return true;
+    }
+
+    partial void OnSelectedInputChanged(AudioDevice? value) => UpdatePairing();
+    partial void OnSelectedOutputChanged(AudioDevice? value) => UpdatePairing();
+
+    /// <summary>
+    /// Android keeps only one Bluetooth audio device active (confirmed on the Pixel 7a: activating
+    /// one makes the other's A2DP and SCO links unavailable), so a Bluetooth mic only works with
+    /// wired output or with the same headset. A loudspeaker's own mic would feed straight back.
+    /// </summary>
+    void UpdatePairing()
+    {
+        var (input, output) = (SelectedInput, SelectedOutput);
+        PairingProblem = (input, output) switch
+        {
+            ({ IsBluetoothMic: true }, { IsBluetooth: true }) when input.BluetoothAddress != output.BluetoothAddress =>
+                "A Bluetooth mic can't be used with a different Bluetooth speaker: Android only keeps one Bluetooth " +
+                "audio device active. Use the phone, wired or USB mic with the speaker, or wired headphones with the Bluetooth mic.",
+            ({ IsBluetoothMic: true, IsLoudspeaker: true }, { IsBluetooth: true }) =>
+                "This speaker's own mic would pick up its sound and howl. Choose a different mic.",
+            _ => null,
+        };
+
+        bool feedback = false;
+        if (PairingProblem is not null)
+            PairingWarning = null;
+        else if (input is { IsBluetoothMic: true } && output is { IsBluetooth: true })
+            PairingWarning = "Using the headset's own mic switches it to Android's call-quality link: lower sound quality and a bit more delay.";
+        else if (input is not null && !input.IsBluetoothMic && output is { IsBluetooth: true }
+                 && !Preferences.Default.Get(SettingsKeys.FeedbackWarningDismissed, false))
+        {
+            feedback = true;
+            PairingWarning = "Feedback risk: the mic can pick up the speaker and howl. Keep the volume moderate and the " +
+                "speaker away from the mic, not pointing at you. NeonMouth lowers the volume automatically if it howls.";
+        }
+        else
+            PairingWarning = null;
+        CanDismissPairingWarning = feedback;
+        ToggleCommand.NotifyCanExecuteChanged();
+    }
+
+    [RelayCommand]
+    void DismissPairingWarning()
+    {
+        if (!CanDismissPairingWarning) return;
+        Preferences.Default.Set(SettingsKeys.FeedbackWarningDismissed, true);
+        UpdatePairing();
     }
 
     partial void OnSelectedEffectChanged(VoiceEffectKind value)
@@ -313,12 +379,17 @@ public partial class MainViewModel : ObservableObject
     void ApplyDeviceChoice()
     {
         if (!IsRunning || SelectedInput is null || SelectedOutput is null) return;
+        if (HasPairingProblem)
+        {
+            _session.Stop();
+            return;
+        }
         RememberOutput(SelectedOutput);
         _session.SwitchDevices(SelectedInput, SelectedOutput);
     }
 
     /// <summary>Start is disabled without both devices (§3.1); a missing mic permission is requested on Start.</summary>
-    bool CanToggle() => IsRunning || (SelectedInput is not null && SelectedOutput is not null);
+    bool CanToggle() => IsRunning || (SelectedInput is not null && SelectedOutput is not null && !HasPairingProblem);
 
     [RelayCommand(CanExecute = nameof(CanToggle))]
     async Task ToggleAsync()
@@ -337,14 +408,15 @@ public partial class MainViewModel : ObservableObject
         }
 
         Rescan();
-        if (HasBlockingMessage || SelectedInput is null || SelectedOutput is null) return;
+        if (HasBlockingMessage || HasPairingProblem || SelectedInput is null || SelectedOutput is null) return;
         PendingDevice = null;
         RememberOutput(SelectedOutput);
         await _session.StartAsync(CurrentSettings, SelectedInput, SelectedOutput);
     }
 
     static AudioDevice? AutoSelectInput(IReadOnlyList<AudioDevice> inputs) =>
-        // Phase 3 adds "last-used Bluetooth mic" ahead of the built-in mic (§2.5).
+        // Bluetooth, USB and wired mics are never auto-selected: a Bluetooth mic can't pair with a
+        // Bluetooth speaker (only one Bluetooth device is active), and new mics are a deliberate choice.
         inputs.FirstOrDefault(d => d.Kind == AudioDeviceKind.BuiltInMic) ?? inputs.FirstOrDefault();
 
     static AudioDevice? AutoSelectOutput(IReadOnlyList<AudioDevice> outputs)

@@ -19,6 +19,7 @@ sealed class AndroidAudioSession : IAudioSession
     static readonly AudioDeviceType[] WiredOutputTypes =
         [AudioDeviceType.WiredHeadphones, AudioDeviceType.WiredHeadset, AudioDeviceType.UsbHeadset];
     static readonly AudioDeviceType[] WiredInputTypes = [AudioDeviceType.WiredHeadset, AudioDeviceType.UsbHeadset];
+    static readonly AudioDeviceType[] UsbInputTypes = [AudioDeviceType.UsbDevice, AudioDeviceType.UsbAccessory];
     static readonly AudioDeviceType[] BluetoothMicTypes = [AudioDeviceType.BluetoothSco, AudioDeviceType.BleHeadset];
     const string Tag = "NeonMouth";
 
@@ -29,6 +30,7 @@ sealed class AndroidAudioSession : IAudioSession
     AudioDevice? _input;
     AudioDevice? _output;
     BluetoothA2dp? _a2dp;
+    readonly BluetoothAdapter? _adapter;
 
     public static AndroidAudioSession? Current { get; private set; }
 
@@ -44,8 +46,8 @@ sealed class AndroidAudioSession : IAudioSession
 
         // AudioManager only lists the *active* A2DP device. A speaker that is still connected but
         // lost "active" to wired headphones is found through the A2DP profile instead.
-        var adapter = ((BluetoothManager?)AApp.Context.GetSystemService(Context.BluetoothService))?.Adapter;
-        adapter?.GetProfileProxy(AApp.Context, new A2dpListener(this), ProfileType.A2dp);
+        _adapter = ((BluetoothManager?)AApp.Context.GetSystemService(Context.BluetoothService))?.Adapter;
+        _adapter?.GetProfileProxy(AApp.Context, new A2dpListener(this), ProfileType.A2dp);
         var filter = new IntentFilter(BluetoothA2dp.ActionConnectionStateChanged);
         ContextCompat.RegisterReceiver(AApp.Context, new A2dpReceiver(this), filter, ContextCompat.ReceiverExported);
         _engine.StreamError += OnStreamError;
@@ -53,6 +55,8 @@ sealed class AndroidAudioSession : IAudioSession
 
     /// <summary>The output the session is playing to, for the notification and FGS type.</summary>
     internal AudioDevice? CurrentOutput => _output;
+
+    internal AudioDevice? CurrentInput => _input;
 
     public DeviceList GetDevices()
     {
@@ -63,8 +67,12 @@ sealed class AndroidAudioSession : IAudioSession
             inputs.Add(new AudioDevice(builtIn.Id, "builtin_mic", "Phone microphone", AudioDeviceKind.BuiltInMic));
         foreach (var d in devices.Where(d => WiredInputTypes.Contains(d.Type)))
             inputs.Add(new AudioDevice(d.Id, $"wired_mic:{d.Type}", $"Wired microphone ({d.ProductName})", AudioDeviceKind.WiredMic));
+        // Wireless clip-on mic receivers usually enumerate as a generic USB device.
+        foreach (var d in devices.Where(d => UsbInputTypes.Contains(d.Type)))
+            inputs.Add(new AudioDevice(d.Id, $"usb_mic:{d.ProductName}", $"USB microphone ({d.ProductName})", AudioDeviceKind.UsbMic));
         foreach (var d in devices.Where(d => BluetoothMicTypes.Contains(d.Type)))
-            inputs.Add(new AudioDevice(d.Id, $"bt_mic:{d.Address}", $"Bluetooth mic: {d.ProductName}", AudioDeviceKind.BluetoothMic));
+            inputs.Add(new AudioDevice(d.Id, $"bt_mic:{d.Address}", $"Bluetooth mic: {d.ProductName}", AudioDeviceKind.BluetoothMic,
+                BluetoothAddress: d.Address, IsLoudspeaker: IsLoudspeaker(d.Address)));
 
         var outputs = new List<AudioDevice>();
         foreach (var d in _audioManager.GetDevices(GetDevicesTargets.Outputs) ?? [])
@@ -74,7 +82,8 @@ sealed class AndroidAudioSession : IAudioSession
             else if (d.Type == AudioDeviceType.BluetoothA2dp)
             {
                 string key = string.IsNullOrEmpty(d.Address) ? d.ProductName ?? "" : d.Address;
-                outputs.Add(new AudioDevice(d.Id, $"bt:{key}", $"Bluetooth: {d.ProductName}", AudioDeviceKind.BluetoothSpeaker));
+                outputs.Add(new AudioDevice(d.Id, $"bt:{key}", $"Bluetooth: {d.ProductName}", AudioDeviceKind.BluetoothSpeaker,
+                    BluetoothAddress: d.Address, IsLoudspeaker: IsLoudspeaker(d.Address)));
             }
         }
         AddInactiveBluetoothSpeakers(outputs);
@@ -95,7 +104,27 @@ sealed class AndroidAudioSession : IAudioSession
             // Negative IDs never collide with AudioDeviceInfo IDs; stable for the process lifetime.
             int id = -1 - (key.GetHashCode() & 0x7FFFFFFF) % 1_000_000;
             outputs.Add(new AudioDevice(id, key, $"Bluetooth: {bt.Name} (not active)",
-                AudioDeviceKind.BluetoothSpeaker, NeedsActivation: true));
+                AudioDeviceKind.BluetoothSpeaker, NeedsActivation: true, BluetoothAddress: bt.Address,
+                IsLoudspeaker: IsLoudspeaker(bt.Address)));
+        }
+    }
+
+    /// <summary>
+    /// Whether a Bluetooth device plays out loud. Only headphones/earbuds classes count as safe;
+    /// unknown classes are treated as loudspeakers because their own mic would feed back.
+    /// </summary>
+    bool IsLoudspeaker(string? address)
+    {
+        if (_adapter is null || string.IsNullOrEmpty(address) || !HasPermission(global::Android.Manifest.Permission.BluetoothConnect))
+            return true;
+        try
+        {
+            var deviceClass = _adapter.GetRemoteDevice(address)?.BluetoothClass?.DeviceClass;
+            return deviceClass is not (DeviceClass.AudioVideoHeadphones or DeviceClass.AudioVideoWearableHeadset);
+        }
+        catch (Exception ex) when (ex is Java.Lang.SecurityException or Java.Lang.IllegalArgumentException)
+        {
+            return true;
         }
     }
 
@@ -117,6 +146,8 @@ sealed class AndroidAudioSession : IAudioSession
                 .AddFlags(ActivityFlags.NewTask));
         }
     }
+
+    public bool IsFeedbackProtectionActive => _engine.IsRunning && _engine.Processor?.Howling.IsDucking == true;
 
     public (float Input, float Output) GetLevels() =>
         _engine.IsRunning && _engine.Processor is { } p ? (p.InputPeak, p.OutputPeak) : (0f, 0f);
@@ -196,12 +227,18 @@ sealed class AndroidAudioSession : IAudioSession
             {
                 // AAudio's device ID is the preferred-device override (§5.3): a wired headset mic
                 // can't take over input from the selected built-in mic.
-                bool btMic = input.Kind == AudioDeviceKind.BluetoothMic;
-                if (btMic) RouteBluetoothMic(input);
-                _engine.Start(input.Id, output.Id,
+                bool btMic = input.IsBluetoothMic;
+                int outputId = output.Id;
+                if (btMic)
+                {
+                    var sco = RouteBluetoothMic(input);
+                    // While its mic is in use, a headset only plays over the SCO link (A2DP is suspended).
+                    if (output.BluetoothAddress == input.BluetoothAddress) outputId = sco.Id;
+                }
+                _engine.Start(input.Id, outputId,
                     btMic ? AAudioNative.InputPresetVoiceCommunication : AAudioNative.InputPresetVoicePerformance);
                 var actual = _engine.ActualDeviceIds;
-                global::Android.Util.Log.Info(Tag, $"Spike: requested in={input.Id} ({input.Name}) out={output.Id} ({output.Name}); " +
+                global::Android.Util.Log.Info(Tag, $"Start: requested in={input.Id} ({input.Name}) out={outputId} ({output.Name}); " +
                     $"opened in={actual.Input} out={actual.Output}; mode={_audioManager.Mode}; " +
                     $"commDevice={_audioManager.CommunicationDevice?.Type}:{_audioManager.CommunicationDevice?.ProductName}");
                 ApplySettings();
@@ -231,13 +268,13 @@ sealed class AndroidAudioSession : IAudioSession
 
     /// <summary>
     /// A Bluetooth headset mic only delivers audio once its SCO/LE link is the communication device.
-    /// Phase 3 spike: on many phones this suspends A2DP to every device, which is what we're testing.
+    /// Android keeps one active Bluetooth audio device, so the output can't be a different Bluetooth
+    /// device (the view model blocks that pairing). Returns the headset's SCO/LE output device.
     /// </summary>
-    void RouteBluetoothMic(AudioDevice input)
+    AudioDeviceInfo RouteBluetoothMic(AudioDevice input)
     {
-        string address = input.Key["bt_mic:".Length..];
         var target = _audioManager.AvailableCommunicationDevices
-            .FirstOrDefault(d => BluetoothMicTypes.Contains(d.Type) && d.Address == address);
+            .FirstOrDefault(d => BluetoothMicTypes.Contains(d.Type) && d.Address == input.BluetoothAddress);
         if (target is null)
             throw new InvalidOperationException("Bluetooth mic isn't available as a communication device.");
         _audioManager.Mode = Mode.InCommunication;
@@ -247,15 +284,19 @@ sealed class AndroidAudioSession : IAudioSession
         // The SCO link takes a moment to come up; opening the input earlier yields silence.
         for (int i = 0; i < 30 && _audioManager.CommunicationDevice?.Id != target.Id; i++)
             Thread.Sleep(100);
-        global::Android.Util.Log.Info(Tag, $"Spike: communication device now {_audioManager.CommunicationDevice?.ProductName}");
+        global::Android.Util.Log.Info(Tag, $"Communication device now {_audioManager.CommunicationDevice?.ProductName}");
+        return target;
     }
 
+    /// <summary>
+    /// Always clears our communication-device request, not only when this run set it: a process
+    /// killed mid-session (or an earlier build) can leave the route behind, as seen in logcat.
+    /// </summary>
     void ReleaseBluetoothMic()
     {
-        if (!_commRouted) return;
-        _commRouted = false;
         _audioManager.ClearCommunicationDevice();
-        _audioManager.Mode = Mode.Normal;
+        if (_commRouted) _audioManager.Mode = Mode.Normal;
+        _commRouted = false;
     }
 
     void ApplySettings()

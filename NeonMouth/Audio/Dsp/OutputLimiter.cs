@@ -15,7 +15,7 @@ public sealed class OutputLimiter
     /// <summary>Linear gain derived from the user's ceiling setting (0..1).</summary>
     public float UserGain { get; set; } = 0.5f;
 
-    /// <summary>Additional ducking gain (used by howling protection in a later phase).</summary>
+    /// <summary>Additional ducking gain from <see cref="HowlingDetector"/>.</summary>
     public float DuckGain { get; set; } = 1f;
 
     public OutputLimiter(int sampleRate, float releaseMs = 150f)
