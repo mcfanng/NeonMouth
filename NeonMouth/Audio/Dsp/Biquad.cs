@@ -30,6 +30,15 @@ public sealed class Biquad
         return Set(alpha, 0, -alpha, 1 + alpha, -2 * cos, 1 - alpha);
     }
 
+    /// <summary>Peaking EQ; a negative <paramref name="gainDb"/> makes a notch of that depth.</summary>
+    public Biquad SetPeaking(int sampleRate, float freq, float q, float gainDb)
+    {
+        var (w, alpha) = Params(sampleRate, freq, q);
+        float cos = MathF.Cos(w);
+        float a = MathF.Pow(10f, gainDb / 40f);
+        return Set(1 + alpha * a, -2 * cos, 1 - alpha * a, 1 + alpha / a, -2 * cos, 1 - alpha / a);
+    }
+
     static (float w, float alpha) Params(int sampleRate, float freq, float q)
     {
         freq = Math.Clamp(freq, 10f, sampleRate * 0.45f);

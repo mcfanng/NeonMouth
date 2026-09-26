@@ -21,6 +21,7 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty] VoiceEffectKind _selectedEffect;
     [ObservableProperty] double _intensity;
     [ObservableProperty] double _outputGain;
+    [ObservableProperty] bool _feedbackProtection;
 
     // Pickers bind to name lists + SelectedIndex; SelectedItem binding proved unreliable (see Effects).
     [ObservableProperty] IReadOnlyList<string> _inputNames = [];
@@ -28,13 +29,28 @@ public partial class MainViewModel : ObservableObject
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(SelectedInputIndex), nameof(IsRecommendedSetup))]
-    [NotifyCanExecuteChangedFor(nameof(ToggleCommand))]
     AudioDevice? _selectedInput;
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(SelectedOutputIndex), nameof(IsRecommendedSetup))]
-    [NotifyCanExecuteChangedFor(nameof(ToggleCommand))]
     AudioDevice? _selectedOutput;
+
+    /// <summary>Why the selected mic + output can't be used together, or null (§1.1, §4.1).</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasPairingProblem))]
+    string? _pairingProblem;
+
+    public bool HasPairingProblem => PairingProblem is not null;
+
+    /// <summary>Non-blocking advice about the selected pairing (call-quality audio).</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasPairingWarning))]
+    string? _pairingWarning;
+
+    public bool HasPairingWarning => PairingWarning is not null;
+
+    /// <summary>Howling protection just acted (§4.1 indicator).</summary>
+    [ObservableProperty] bool _feedbackProtectionActive;
 
     [ObservableProperty] bool _inputAutoSelected;
     [ObservableProperty] bool _outputAutoSelected;
@@ -56,7 +72,12 @@ public partial class MainViewModel : ObservableObject
     [NotifyCanExecuteChangedFor(nameof(ToggleCommand))]
     bool _isRunning;
 
-    [ObservableProperty] string _statusText = "Stopped";
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasStatusText))]
+    string? _statusText;
+
+    public bool HasStatusText => !string.IsNullOrEmpty(StatusText);
+
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasBlockingMessage))]
     string? _blockingMessage;
@@ -75,6 +96,7 @@ public partial class MainViewModel : ObservableObject
         SelectedEffect = Enum.TryParse<VoiceEffectKind>(Preferences.Default.Get(SettingsKeys.Effect, ""), out var e) ? e : VoiceEffectKind.Witch;
         Intensity = Preferences.Default.Get(SettingsKeys.Intensity, 0.7);
         OutputGain = Preferences.Default.Get(SettingsKeys.OutputGain, 0.5);
+        FeedbackProtection = Preferences.Default.Get(SettingsKeys.FeedbackProtection, true);
         ShowDisclosure = !Preferences.Default.Get(SettingsKeys.DisclosureAccepted, false);
 
         _session.StatusChanged += (_, s) => MainThread.BeginInvokeOnMainThread(() => ApplyStatus(s));
@@ -88,11 +110,12 @@ public partial class MainViewModel : ObservableObject
             var (input, output) = _session.GetLevels();
             InputLevel = input;
             OutputLevel = output;
+            FeedbackProtectionActive = _session.IsFeedbackProtectionActive;
             return true;
         });
     }
 
-    SessionSettings CurrentSettings => new(SelectedEffect, (float)Intensity, (float)OutputGain);
+    SessionSettings CurrentSettings => new(SelectedEffect, (float)Intensity, (float)OutputGain, FeedbackProtection);
 
     // Picker binds by index: SelectedItem-to-enum binding silently failed to update SelectedEffect.
     public int SelectedEffectIndex
@@ -144,6 +167,32 @@ public partial class MainViewModel : ObservableObject
         return true;
     }
 
+    partial void OnSelectedInputChanged(AudioDevice? value) => UpdatePairing();
+    partial void OnSelectedOutputChanged(AudioDevice? value) => UpdatePairing();
+
+    /// <summary>
+    /// Android keeps only one Bluetooth audio device active (confirmed on the Pixel 7a: activating
+    /// one makes the other's A2DP and SCO links unavailable), so a Bluetooth mic only works with
+    /// wired output or with the same headset. Using a speaker's own mic is left to the user's judgement:
+    /// Android can't tell speakers from headsets (the JBL Clip+ reports the same class as the Pixel Buds).
+    /// </summary>
+    void UpdatePairing()
+    {
+        var (input, output) = (SelectedInput, SelectedOutput);
+        PairingProblem = (input, output) switch
+        {
+            ({ IsBluetoothMic: true }, { IsBluetooth: true }) when input.BluetoothAddress != output.BluetoothAddress =>
+                "A Bluetooth mic can't be used with a different Bluetooth speaker: Android only keeps one Bluetooth " +
+                "audio device active. Use the phone, wired or USB mic with the speaker, or wired headphones with the Bluetooth mic.",
+            _ => null,
+        };
+
+        PairingWarning = PairingProblem is null && input is { IsBluetoothMic: true } && output is { IsBluetooth: true }
+            ? "Using the Bluetooth device's own mic switches it to Android's call-quality link, so the sound quality is lower."
+            : null;
+        ToggleCommand.NotifyCanExecuteChanged();
+    }
+
     partial void OnSelectedEffectChanged(VoiceEffectKind value)
     {
         OnPropertyChanged(nameof(SelectedEffectIndex));
@@ -160,6 +209,12 @@ public partial class MainViewModel : ObservableObject
     partial void OnOutputGainChanged(double value)
     {
         Preferences.Default.Set(SettingsKeys.OutputGain, value);
+        _session?.Update(CurrentSettings);
+    }
+
+    partial void OnFeedbackProtectionChanged(bool value)
+    {
+        Preferences.Default.Set(SettingsKeys.FeedbackProtection, value);
         _session?.Update(CurrentSettings);
     }
 
@@ -313,12 +368,17 @@ public partial class MainViewModel : ObservableObject
     void ApplyDeviceChoice()
     {
         if (!IsRunning || SelectedInput is null || SelectedOutput is null) return;
+        if (HasPairingProblem)
+        {
+            _session.Stop();
+            return;
+        }
         RememberOutput(SelectedOutput);
         _session.SwitchDevices(SelectedInput, SelectedOutput);
     }
 
     /// <summary>Start is disabled without both devices (§3.1); a missing mic permission is requested on Start.</summary>
-    bool CanToggle() => IsRunning || (SelectedInput is not null && SelectedOutput is not null);
+    bool CanToggle() => IsRunning || (SelectedInput is not null && SelectedOutput is not null && !HasPairingProblem);
 
     [RelayCommand(CanExecute = nameof(CanToggle))]
     async Task ToggleAsync()
@@ -337,14 +397,15 @@ public partial class MainViewModel : ObservableObject
         }
 
         Rescan();
-        if (HasBlockingMessage || SelectedInput is null || SelectedOutput is null) return;
+        if (HasBlockingMessage || HasPairingProblem || SelectedInput is null || SelectedOutput is null) return;
         PendingDevice = null;
         RememberOutput(SelectedOutput);
         await _session.StartAsync(CurrentSettings, SelectedInput, SelectedOutput);
     }
 
     static AudioDevice? AutoSelectInput(IReadOnlyList<AudioDevice> inputs) =>
-        // Phase 3 adds "last-used Bluetooth mic" ahead of the built-in mic (§2.5).
+        // Bluetooth, USB and wired mics are never auto-selected: a Bluetooth mic can't pair with a
+        // Bluetooth speaker (only one Bluetooth device is active), and new mics are a deliberate choice.
         inputs.FirstOrDefault(d => d.Kind == AudioDeviceKind.BuiltInMic) ?? inputs.FirstOrDefault();
 
     static AudioDevice? AutoSelectOutput(IReadOnlyList<AudioDevice> outputs)
@@ -393,8 +454,9 @@ public partial class MainViewModel : ObservableObject
     void ApplyStatus(SessionStatus status)
     {
         IsRunning = status.State == SessionState.Running;
-        StatusText = status.OutputLatencyMs is { } ms
-            ? $"{status.Message} · ~{ms:0} ms output buffer"
+        // A plain "Stopped" is implied by the Start button; errors and lost devices still show.
+        StatusText = status.State == SessionState.Stopped ? null
+            : status.OutputLatencyMs is { } ms ? $"{status.Message} · ~{ms:0} ms output buffer"
             : status.Message;
     }
 }

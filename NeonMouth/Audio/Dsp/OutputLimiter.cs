@@ -15,9 +15,6 @@ public sealed class OutputLimiter
     /// <summary>Linear gain derived from the user's ceiling setting (0..1).</summary>
     public float UserGain { get; set; } = 0.5f;
 
-    /// <summary>Additional ducking gain (used by howling protection in a later phase).</summary>
-    public float DuckGain { get; set; } = 1f;
-
     public OutputLimiter(int sampleRate, float releaseMs = 150f)
     {
         _releaseCoeff = MathF.Exp(-1f / (sampleRate * releaseMs / 1000f));
@@ -27,7 +24,7 @@ public sealed class OutputLimiter
 
     public void Process(Span<float> block)
     {
-        float pre = Math.Clamp(UserGain, 0f, 1f) * Math.Clamp(DuckGain, 0f, 1f);
+        float pre = Math.Clamp(UserGain, 0f, 1f);
         for (int i = 0; i < block.Length; i++)
         {
             float s = block[i] * pre;

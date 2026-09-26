@@ -46,11 +46,11 @@ sealed class VoiceForegroundService : Service
     }
 
     /// <summary>
-    /// connectedDevice applies to a Bluetooth output, but from API 34 it throws unless a Bluetooth
+    /// connectedDevice applies to a Bluetooth output or mic, but from API 34 it throws unless a Bluetooth
     /// permission is granted, so it's only added when it can be.
     /// </summary>
     static ForegroundService ForegroundTypes(AndroidAudioSession session) =>
-        session.CurrentOutput?.IsBluetooth == true
+        (session.CurrentOutput?.IsBluetooth == true || session.CurrentInput?.IsBluetoothMic == true)
             && AndroidAudioSession.HasPermission(global::Android.Manifest.Permission.BluetoothConnect)
             ? ForegroundService.TypeMicrophone | ForegroundService.TypeConnectedDevice
             : ForegroundService.TypeMicrophone;

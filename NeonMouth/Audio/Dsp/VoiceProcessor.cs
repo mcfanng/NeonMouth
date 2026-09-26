@@ -1,8 +1,8 @@
 namespace NeonMouth.Audio.Dsp;
 
 /// <summary>
-/// The platform-independent signal chain (§5.3): input gain → effect → output limiter.
-/// Howling detection/ducking is inserted in phase 3. Parameters may be changed from any thread;
+/// The platform-independent signal chain (§5.3): input gain → effect → howling detection (notches)
+/// → output limiter. Parameters may be changed from any thread;
 /// they are read once per block on the audio thread.
 /// </summary>
 public sealed class VoiceProcessor
@@ -12,6 +12,7 @@ public sealed class VoiceProcessor
     int _requestedIndex;
 
     public OutputLimiter Limiter { get; }
+    public HowlingDetector Howling { get; }
     public float InputGain { get; set; } = 1.5f;
     public float Intensity { get; set; } = 0.7f;
 
@@ -25,6 +26,7 @@ public sealed class VoiceProcessor
             .Select(k => VoiceEffectFactory.Create(k, sampleRate))
             .ToArray();
         Limiter = new OutputLimiter(sampleRate);
+        Howling = new HowlingDetector(sampleRate);
     }
 
     public VoiceEffectKind Effect
@@ -65,11 +67,14 @@ public sealed class VoiceProcessor
                 block.Clear();
                 effect.Reset();
                 Limiter.Reset();
+                Howling.Reset();
                 OutputPeak = 0f;
                 return;
             }
         }
 
+        // Analysed before the limiter, which would flatten the growth of a howl.
+        Howling.Process(block);
         Limiter.Process(block);
         for (int i = 0; i < block.Length; i++) outPeak = MathF.Max(outPeak, MathF.Abs(block[i]));
         OutputPeak = outPeak;
@@ -79,5 +84,6 @@ public sealed class VoiceProcessor
     {
         foreach (var e in _effects) e.Reset();
         Limiter.Reset();
+        Howling.Reset();
     }
 }

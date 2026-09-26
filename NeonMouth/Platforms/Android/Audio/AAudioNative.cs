@@ -23,6 +23,7 @@ static unsafe partial class AAudioNative
 
     public const int UsageMedia = 1;
     public const int ContentTypeSpeech = 1;
+    public const int InputPresetVoiceCommunication = 7;
     public const int InputPresetVoicePerformance = 10;
 
     [LibraryImport(Lib)] public static partial int AAudio_createStreamBuilder(out nint builder);
@@ -46,12 +47,12 @@ static unsafe partial class AAudioNative
     [LibraryImport(Lib)] public static partial int AAudioStream_read(nint stream, float* buffer, int numFrames, long timeoutNanoseconds);
     [LibraryImport(Lib)] public static partial int AAudioStream_write(nint stream, float* buffer, int numFrames, long timeoutNanoseconds);
     [LibraryImport(Lib)] public static partial int AAudioStream_getSampleRate(nint stream);
+    [LibraryImport(Lib)] public static partial int AAudioStream_getDeviceId(nint stream);
     [LibraryImport(Lib)] public static partial int AAudioStream_getChannelCount(nint stream);
     [LibraryImport(Lib)] public static partial int AAudioStream_getFramesPerBurst(nint stream);
     [LibraryImport(Lib)] public static partial int AAudioStream_setBufferSizeInFrames(nint stream, int numFrames);
     [LibraryImport(Lib)] public static partial int AAudioStream_getPerformanceMode(nint stream);
     [LibraryImport(Lib)] public static partial int AAudioStream_getSharingMode(nint stream);
-    [LibraryImport(Lib)] public static partial int AAudioStream_getDeviceId(nint stream);
 
     [LibraryImport(Lib)] public static partial nint AAudio_convertResultToText(int result);
 

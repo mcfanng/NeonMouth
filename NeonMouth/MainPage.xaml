@@ -47,6 +47,14 @@
                     </VerticalStackLayout>
                 </Border>
 
+                <Label Text="{Binding PairingProblem}" IsVisible="{Binding HasPairingProblem}"
+                       TextColor="OrangeRed" FontAttributes="Bold" />
+
+                <!-- Call-quality advice for a Bluetooth device's own mic. -->
+                <Border Padding="14" StrokeShape="RoundRectangle 10" IsVisible="{Binding HasPairingWarning}">
+                    <Label Text="{Binding PairingWarning}" />
+                </Border>
+
                 <Label Text="{Binding BlockingMessage}"
                        IsVisible="{Binding HasBlockingMessage}"
                        TextColor="OrangeRed" FontAttributes="Bold" />
@@ -68,10 +76,24 @@
                            FontSize="12" TextColor="{StaticResource Gray500}" />
                 </VerticalStackLayout>
 
+                <!-- Feedback protection toggle (§3.2, §4.1). -->
+                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                    <VerticalStackLayout Spacing="2" VerticalOptions="Center">
+                        <Label Text="Feedback protection" />
+                        <Label Text="Cuts the pitch of a howl when the speaker is too close to the mic."
+                               FontSize="12" TextColor="{StaticResource Gray500}" />
+                    </VerticalStackLayout>
+                    <Switch Grid.Column="1" IsToggled="{Binding FeedbackProtection}" VerticalOptions="Center" />
+                </Grid>
+
                 <Button Text="{Binding StartStopText}" Command="{Binding ToggleCommand}"
                         FontSize="20" HeightRequest="60" />
 
-                <Label Text="{Binding StatusText}" HorizontalOptions="Center" />
+                <Label Text="{Binding StatusText}" IsVisible="{Binding HasStatusText}" HorizontalOptions="Center" />
+
+                <Label Text="⚠ Feedback detected and reduced. Move the speaker away from the mic or turn it down."
+                       IsVisible="{Binding FeedbackProtectionActive}" TextColor="OrangeRed" FontAttributes="Bold"
+                       HorizontalTextAlignment="Center" />
 
                 <VerticalStackLayout Spacing="4">
                     <Label Text="Mic level" FontSize="12" />

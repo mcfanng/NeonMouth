@@ -1,4 +1,4 @@
-using System.Runtime.Versioning;
+﻿using System.Runtime.Versioning;
 using NeonMouth.Audio.Dsp;
 using static NeonMouth.Platforms.Android.Audio.AAudioNative;
 
@@ -38,7 +38,8 @@ sealed unsafe class DuplexAudioEngine : IDisposable
     /// <summary>Raised on the audio thread when a stream reports an error (e.g. device disconnected).</summary>
     public event Action<int>? StreamError;
 
-    public void Start(int inputDeviceId, int outputDeviceId)
+    /// <param name="inputPreset">Bluetooth SCO mics only capture with a voice-communication preset.</param>
+    public void Start(int inputDeviceId, int outputDeviceId, int inputPreset = InputPresetVoicePerformance)
     {
         if (IsRunning) throw new InvalidOperationException("Engine already running.");
         try
@@ -50,7 +51,7 @@ sealed unsafe class DuplexAudioEngine : IDisposable
             AAudioStream_setBufferSizeInFrames(_output, FramesPerBurst * 2);
 
             // Input opened at the output's rate so no resampling happens on our side.
-            _input = OpenInput(inputDeviceId, SampleRate);
+            _input = OpenInput(inputDeviceId, SampleRate, inputPreset);
 
             _inBuffer = new float[FramesPerBurst];
             _outBuffer = new float[FramesPerBurst * _outputChannels];
@@ -89,6 +90,10 @@ sealed unsafe class DuplexAudioEngine : IDisposable
         CloseStream(ref _input);
     }
 
+    /// <summary>Device IDs AAudio actually opened (may differ from the requested ones).</summary>
+    public (int Input, int Output) ActualDeviceIds =>
+        (_input == 0 ? 0 : AAudioStream_getDeviceId(_input), _output == 0 ? 0 : AAudioStream_getDeviceId(_output));
+
     public void Dispose() => Stop();
 
     static nint OpenOutput(int deviceId)
@@ -109,7 +114,7 @@ sealed unsafe class DuplexAudioEngine : IDisposable
         finally { AAudioStreamBuilder_delete(b); }
     }
 
-    static nint OpenInput(int deviceId, int sampleRate)
+    static nint OpenInput(int deviceId, int sampleRate, int inputPreset)
     {
         Check(AAudio_createStreamBuilder(out var b), "create builder");
         try
@@ -121,7 +126,7 @@ sealed unsafe class DuplexAudioEngine : IDisposable
             AAudioStreamBuilder_setSampleRate(b, sampleRate);
             AAudioStreamBuilder_setSharingMode(b, SharingModeExclusive);
             AAudioStreamBuilder_setPerformanceMode(b, PerformanceModeLowLatency);
-            AAudioStreamBuilder_setInputPreset(b, InputPresetVoicePerformance);
+            AAudioStreamBuilder_setInputPreset(b, inputPreset);
             Check(AAudioStreamBuilder_openStream(b, out var stream), "open input");
             return stream;
         }
