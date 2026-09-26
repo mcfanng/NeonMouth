@@ -62,16 +62,6 @@ public sealed class HowlingDetector
     int _consecutive;
     int _sinceTrigger = int.MaxValue;
 
-    // --- Temporary Phase 3 tuning diagnostics. Remove once thresholds are settled. ---
-    /// <summary>Set from the platform layer to log detector decisions; null disables all logging.</summary>
-    public static Action<string>? Diagnostics;
-    int _hopsSinceLog;
-    float _worstRatioDb = float.NegativeInfinity;
-    float _worstPeakDbfs;
-    int _worstBin;
-    bool _worstLoud, _worstNarrow, _worstHarmonic;
-    int _tonalHops;
-
     public HowlingDetector(int sampleRate)
     {
         _sampleRate = sampleRate;
@@ -198,15 +188,10 @@ public sealed class HowlingDetector
 
         float peakDbfs = 10f * MathF.Log10(peakBand / _windowPowerGain + 1e-12f);
         float ratioDb = 10f * MathF.Log10(peakBand / (mean + 1e-20f));
-        // Split out so the diagnostics can say which clause rejected a candidate; short-circuit
-        // order is unchanged.
         bool loud = peakDbfs > MinPeakDbfs && peakBin * (float)_sampleRate / FftSize >= MinHowlHz;
         bool narrow = ratioDb > (peakBin >= _highBin ? HighPeakToAverageDb : PeakToAverageDb);
         bool harmonic = loud && narrow && HasHarmonics(peakBin, peakBand, minBin);
         bool tonal = loud && narrow && !harmonic;
-
-        if (Diagnostics is not null)
-            TrackDiagnostics(peakBin, peakDbfs, ratioDb, loud, narrow, harmonic, tonal);
 
         if (tonal && Math.Abs(peakBin - _lastPeakBin) <= 1) _consecutive++;
         else _consecutive = tonal ? 1 : 0;
@@ -215,15 +200,12 @@ public sealed class HowlingDetector
         if (_consecutive >= FramesToTrigger)
         {
             _consecutive = 0;
-            float hz = InterpolatePeakHz(peakBin, minBin);
-            string action = Suppress(hz);
-            Diagnostics?.Invoke($"HOWL TRIGGER {hz:0} Hz (bin {peakBin}) " +
-                $"peak={peakDbfs:0.0} dBFS ratio={ratioDb:0.0} dB -> {action}");
+            Suppress(InterpolatePeakHz(peakBin, minBin));
         }
     }
 
-    /// <summary>Place or deepen a notch at <paramref name="hz"/>. Returns a log description.</summary>
-    string Suppress(float hz)
+    /// <summary>Place or deepen a notch at <paramref name="hz"/>.</summary>
+    void Suppress(float hz)
     {
         int slot = -1;
         for (int n = 0; n < MaxNotches; n++)
@@ -232,9 +214,9 @@ public sealed class HowlingDetector
 
         if (slot >= 0 && (_notchAge[slot] < NotchStepSeconds * _sampleRate || _notchDb[slot] <= NotchFloorDb + 0.5f))
         {
-            // Still taking effect, or already at full depth (then it's a held note, not feedback).
+            // Still taking effect (Bluetooth delay), or already at full depth: just keep it in place.
             _notchHold[slot] = (int)(NotchHoldSeconds * _sampleRate);
-            return Diagnostics is null ? "" : $"notch {_notchHz[slot]:0} Hz {_notchDb[slot]:0} dB (kept)";
+            return;
         }
 
         _sinceTrigger = 0;
@@ -257,7 +239,6 @@ public sealed class HowlingDetector
         _notchHold[slot] = (int)(NotchHoldSeconds * _sampleRate);
         _notchAge[slot] = 0;
         _notchAppliedDb[slot] = 1f; // frequency may have moved: force new coefficients
-        return Diagnostics is null ? "" : $"notch {_notchHz[slot]:0} Hz {_notchDb[slot]:0} dB";
     }
 
     /// <summary>Parabolic interpolation on the log power of the peak and its neighbours.</summary>
@@ -273,44 +254,6 @@ public sealed class HowlingDetector
             if (denom < 0f) offset = Math.Clamp(0.5f * (a - c) / denom, -0.5f, 0.5f);
         }
         return (peakBin + offset) * _sampleRate / FftSize;
-    }
-
-    /// <summary>
-    /// Rate-limited tuning output: the strongest candidate seen each second, and how the test judged
-    /// it. Allocates only on the ~1 Hz log line, matching the existing per-second input logging.
-    /// </summary>
-    void TrackDiagnostics(int peakBin, float peakDbfs, float ratioDb, bool loud, bool narrow, bool harmonic, bool tonal)
-    {
-        if (tonal) _tonalHops++;
-        if (ratioDb > _worstRatioDb)
-        {
-            _worstRatioDb = ratioDb;
-            _worstPeakDbfs = peakDbfs;
-            _worstBin = peakBin;
-            _worstLoud = loud;
-            _worstNarrow = narrow;
-            _worstHarmonic = harmonic;
-        }
-
-        int hopsPerSecond = Math.Max(1, _sampleRate / Hop);
-        if (++_hopsSinceLog < hopsPerSecond) return;
-
-        string verdict = !_worstLoud ? $"quiet or low (<{MinPeakDbfs:0} dBFS / <{MinHowlHz:0} Hz)"
-            : !_worstNarrow ? "broadband"
-            : _worstHarmonic ? "harmonic -> voice"
-            : "TONAL";
-        string notches = "";
-        for (int n = 0; n < MaxNotches; n++)
-            if (_notchDb[n] < 0f) notches += $" {_notchHz[n]:0}Hz/{_notchDb[n]:0.0}";
-        Diagnostics?.Invoke(
-            $"Howl: top {_worstBin * (float)_sampleRate / FftSize:0} Hz " +
-            $"peak={_worstPeakDbfs:0.0} dBFS ratio={_worstRatioDb:0.0} dB {verdict}; " +
-            $"tonal {_tonalHops}/{hopsPerSecond} hops, run={_consecutive}/{FramesToTrigger}, " +
-            $"notches:{(notches.Length == 0 ? " none" : notches)}");
-
-        _hopsSinceLog = 0;
-        _tonalHops = 0;
-        _worstRatioDb = float.NegativeInfinity;
     }
 
     /// <summary>

@@ -183,7 +183,7 @@ public partial class MainViewModel : ObservableObject
         };
 
         PairingWarning = PairingProblem is null && input is { IsBluetoothMic: true } && output is { IsBluetooth: true }
-            ? "Using the Bluetooth device's own mic switches it to Android's call-quality link: lower sound quality and a bit more delay."
+            ? "Using the Bluetooth device's own mic switches it to Android's call-quality link, so the sound quality is lower."
             : null;
         ToggleCommand.NotifyCanExecuteChanged();
     }
