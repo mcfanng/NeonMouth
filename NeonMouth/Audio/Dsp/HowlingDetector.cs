@@ -40,6 +40,16 @@ public sealed class HowlingDetector
     float _currentGain = 1f; // smoothed linear gain actually applied
     int _holdSamples;
 
+    // --- Temporary Phase 3 tuning diagnostics. Remove once thresholds are settled. ---
+    /// <summary>Set from the platform layer to log detector decisions; null disables all logging.</summary>
+    public static Action<string>? Diagnostics;
+    int _hopsSinceLog;
+    float _worstRatioDb = float.NegativeInfinity;
+    float _worstPeakDbfs;
+    int _worstBin;
+    bool _worstLoud, _worstNarrow, _worstHarmonic;
+    int _tonalHops;
+
     public HowlingDetector(int sampleRate)
     {
         _sampleRate = sampleRate;
@@ -150,7 +160,15 @@ public sealed class HowlingDetector
 
         float peakDbfs = 10f * MathF.Log10(peakBand / _windowPowerGain + 1e-12f);
         float ratioDb = 10f * MathF.Log10(peakBand / (mean + 1e-20f));
-        bool tonal = peakDbfs > MinPeakDbfs && ratioDb > PeakToAverageDb && !HasHarmonics(peakBin, peakBand, minBin);
+        // Split out so the diagnostics can say which clause rejected a candidate; short-circuit
+        // order is unchanged.
+        bool loud = peakDbfs > MinPeakDbfs;
+        bool narrow = ratioDb > PeakToAverageDb;
+        bool harmonic = loud && narrow && HasHarmonics(peakBin, peakBand, minBin);
+        bool tonal = loud && narrow && !harmonic;
+
+        if (Diagnostics is not null)
+            TrackDiagnostics(peakBin, peakDbfs, ratioDb, loud, narrow, harmonic, tonal);
 
         if (tonal && Math.Abs(peakBin - _lastPeakBin) <= 1) _consecutive++;
         else _consecutive = tonal ? 1 : 0;
@@ -163,7 +181,44 @@ public sealed class HowlingDetector
             _duckDb = MathF.Max(DuckFloorDb, MathF.Min(_duckDb, 0f) + DuckStepDb);
             _holdSamples = (int)(HoldSeconds * _sampleRate);
             LastHowlHz = peakBin * (float)_sampleRate / FftSize;
+            Diagnostics?.Invoke($"HOWL TRIGGER {LastHowlHz:0} Hz (bin {peakBin}) " +
+                $"peak={peakDbfs:0.0} dBFS ratio={ratioDb:0.0} dB -> duck={_duckDb:0.0} dB");
         }
+    }
+
+    /// <summary>
+    /// Rate-limited tuning output: the strongest candidate seen each second, and how the test judged
+    /// it. Allocates only on the ~1 Hz log line, matching the existing per-second input logging.
+    /// </summary>
+    void TrackDiagnostics(int peakBin, float peakDbfs, float ratioDb, bool loud, bool narrow, bool harmonic, bool tonal)
+    {
+        if (tonal) _tonalHops++;
+        if (ratioDb > _worstRatioDb)
+        {
+            _worstRatioDb = ratioDb;
+            _worstPeakDbfs = peakDbfs;
+            _worstBin = peakBin;
+            _worstLoud = loud;
+            _worstNarrow = narrow;
+            _worstHarmonic = harmonic;
+        }
+
+        int hopsPerSecond = Math.Max(1, _sampleRate / Hop);
+        if (++_hopsSinceLog < hopsPerSecond) return;
+
+        string verdict = !_worstLoud ? $"quiet (<{MinPeakDbfs:0} dBFS)"
+            : !_worstNarrow ? $"broadband (<{PeakToAverageDb:0} dB)"
+            : _worstHarmonic ? "harmonic -> voice"
+            : "TONAL";
+        Diagnostics?.Invoke(
+            $"Howl: top {_worstBin * (float)_sampleRate / FftSize:0} Hz " +
+            $"peak={_worstPeakDbfs:0.0} dBFS ratio={_worstRatioDb:0.0} dB {verdict}; " +
+            $"tonal {_tonalHops}/{hopsPerSecond} hops, run={_consecutive}/{FramesToTrigger}, " +
+            $"duck={_duckDb:0.0} dB gain={_currentGain:0.00}");
+
+        _hopsSinceLog = 0;
+        _tonalHops = 0;
+        _worstRatioDb = float.NegativeInfinity;
     }
 
     /// <summary>

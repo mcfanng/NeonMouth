@@ -51,6 +51,8 @@ sealed class AndroidAudioSession : IAudioSession
         var filter = new IntentFilter(BluetoothA2dp.ActionConnectionStateChanged);
         ContextCompat.RegisterReceiver(AApp.Context, new A2dpReceiver(this), filter, ContextCompat.ReceiverExported);
         _engine.StreamError += OnStreamError;
+        // Temporary Phase 3 tuning diagnostics; drop this line to silence the detector.
+        HowlingDetector.Diagnostics = m => global::Android.Util.Log.Info("NeonMouth", m);
     }
 
     /// <summary>The output the session is playing to, for the notification and FGS type.</summary>
