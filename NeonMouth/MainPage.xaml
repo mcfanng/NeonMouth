@@ -89,7 +89,7 @@
                 <Button Text="{Binding StartStopText}" Command="{Binding ToggleCommand}"
                         FontSize="20" HeightRequest="60" />
 
-                <Label Text="{Binding StatusText}" HorizontalOptions="Center" />
+                <Label Text="{Binding StatusText}" IsVisible="{Binding HasStatusText}" HorizontalOptions="Center" />
 
                 <Label Text="⚠ Feedback detected and reduced. Move the speaker away from the mic or turn it down."
                        IsVisible="{Binding FeedbackProtectionActive}" TextColor="OrangeRed" FontAttributes="Bold"

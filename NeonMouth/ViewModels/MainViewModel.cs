@@ -72,7 +72,12 @@ public partial class MainViewModel : ObservableObject
     [NotifyCanExecuteChangedFor(nameof(ToggleCommand))]
     bool _isRunning;
 
-    [ObservableProperty] string _statusText = "Stopped";
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasStatusText))]
+    string? _statusText;
+
+    public bool HasStatusText => !string.IsNullOrEmpty(StatusText);
+
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasBlockingMessage))]
     string? _blockingMessage;
@@ -449,8 +454,9 @@ public partial class MainViewModel : ObservableObject
     void ApplyStatus(SessionStatus status)
     {
         IsRunning = status.State == SessionState.Running;
-        StatusText = status.OutputLatencyMs is { } ms
-            ? $"{status.Message} · ~{ms:0} ms output buffer"
+        // A plain "Stopped" is implied by the Start button; errors and lost devices still show.
+        StatusText = status.State == SessionState.Stopped ? null
+            : status.OutputLatencyMs is { } ms ? $"{status.Message} · ~{ms:0} ms output buffer"
             : status.Message;
     }
 }
