@@ -290,4 +290,5 @@ sealed unsafe class DuplexAudioEngine : IDisposable
             dropped += n;
         }
         global::Android.Util.Log.Info("NeonMouth", $"Input queue trimmed: dropped {dropped} frames");
-    }}
+    }
+}
