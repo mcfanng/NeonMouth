@@ -9,8 +9,9 @@ namespace NeonMouth.Audio.Dsp;
 /// A detection places a narrow notch at the howling frequency, deepening it on repeats, so only
 /// that pitch is cut and the rest of the sound keeps its level. Notches hold for a while (otherwise
 /// the howl rebuilds within seconds) and then fade out. There is deliberately no whole-output duck:
-/// device tests showed a full-depth notch always breaks a real feedback loop, so a tone that
-/// survives one is the user's own voice (a held sung note), and ducking it only frustrates.
+/// in device tests it cycled and fired on held sung notes (which a 24 dB duck barely quietened, so
+/// they were the user's voice). A full-depth notch stops real feedback within ~1-2 s, even when the
+/// howl drifts a little around it.
 /// </para>
 /// Allocation-free after construction; call <see cref="Process"/> on the audio thread.
 /// </summary>
@@ -24,14 +25,15 @@ public sealed class HowlingDetector
     const float HarmonicRejectDb = 25f;    // a harmonic within this of the peak means voice, not howl
     const float MinPeakDbfs = -45f;        // ignore quiet tones (hum, noise floor)
     const int FramesToTrigger = 8;         // ~85 ms at 48 kHz
+    const float MinHowlHz = 140f;          // below this is rumble/hum; small speakers do not howl there
 
     const int MaxNotches = 4;
-    const float NotchStepDb = -10f;        // each detection at a notched frequency goes deeper
+    const float NotchStepDb = -15f;        // each detection at a notched frequency goes deeper
     const float NotchFloorDb = -30f;
     const float NotchStepSeconds = 0.4f;   // let a notch act (through Bluetooth delay) before deepening
     const float NotchHoldSeconds = 20f;
     const float NotchReleaseDbPerSecond = 0.5f;
-    const float NotchBandwidthHz = 40f;    // ~1 FFT bin; the frequency estimate is good to a few Hz
+    const float NotchBandwidthHz = 60f;    // howls drift ~±10 Hz around the estimate
 
     const float IndicatorSeconds = 3f;     // how long the UI shows protection after a detection
 
@@ -91,7 +93,7 @@ public sealed class HowlingDetector
         for (int i = 0; i < MaxNotches; i++) _notch[i] = new Biquad();
         // A full-scale sine's bin magnitude is amplitude * windowSum / 2.
         _windowPowerGain = windowSum * windowSum / 4f;
-        // Feedback lives roughly in 100 Hz..10 kHz; skip DC/rumble and the top end.
+        // Feedback lives roughly in 140 Hz..10 kHz; skip DC and the top end.
         _maxBin = Math.Min(FftSize / 2 - 2, (int)(10_000f * FftSize / sampleRate));
         _highBin = (int)(HighFrequencyHz * FftSize / sampleRate);
     }
@@ -174,6 +176,8 @@ public sealed class HowlingDetector
         }
         Fft();
 
+        // Scan from ~100 Hz so a rumble peak below MinHowlHz wins (and is rejected) rather than
+        // leaking into the first bin above it and triggering there.
         int minBin = Math.Max(2, (int)(100f * FftSize / _sampleRate));
         int peakBin = minBin;
         float peak = 0f, total = 0f;
@@ -196,7 +200,7 @@ public sealed class HowlingDetector
         float ratioDb = 10f * MathF.Log10(peakBand / (mean + 1e-20f));
         // Split out so the diagnostics can say which clause rejected a candidate; short-circuit
         // order is unchanged.
-        bool loud = peakDbfs > MinPeakDbfs;
+        bool loud = peakDbfs > MinPeakDbfs && peakBin * (float)_sampleRate / FftSize >= MinHowlHz;
         bool narrow = ratioDb > (peakBin >= _highBin ? HighPeakToAverageDb : PeakToAverageDb);
         bool harmonic = loud && narrow && HasHarmonics(peakBin, peakBand, minBin);
         bool tonal = loud && narrow && !harmonic;
@@ -291,7 +295,7 @@ public sealed class HowlingDetector
         int hopsPerSecond = Math.Max(1, _sampleRate / Hop);
         if (++_hopsSinceLog < hopsPerSecond) return;
 
-        string verdict = !_worstLoud ? $"quiet (<{MinPeakDbfs:0} dBFS)"
+        string verdict = !_worstLoud ? $"quiet or low (<{MinPeakDbfs:0} dBFS / <{MinHowlHz:0} Hz)"
             : !_worstNarrow ? "broadband"
             : _worstHarmonic ? "harmonic -> voice"
             : "TONAL";
