@@ -13,7 +13,7 @@
         </HorizontalStackLayout>
     </Shell.TitleView>
 
-    <Grid>
+    <Grid RowDefinitions="*,Auto">
         <ScrollView>
             <VerticalStackLayout Padding="20" Spacing="16">
 
@@ -91,11 +91,6 @@
                     <Switch Grid.Column="1" IsToggled="{Binding FeedbackProtection}" VerticalOptions="Center" />
                 </Grid>
 
-                <Button Text="{Binding StartStopText}" Command="{Binding ToggleCommand}"
-                        FontSize="20" HeightRequest="60" />
-
-                <Label Text="{Binding StatusText}" IsVisible="{Binding HasStatusText}" HorizontalOptions="Center" />
-
                 <Label Text="⚠ Feedback detected and reduced. Move the speaker away from the mic or turn it down."
                        IsVisible="{Binding FeedbackProtectionActive}" TextColor="OrangeRed" FontAttributes="Bold"
                        HorizontalTextAlignment="Center" />
@@ -109,8 +104,15 @@
             </VerticalStackLayout>
         </ScrollView>
 
+        <!-- Start/Stop stays pinned at the bottom, like the title bar at the top. -->
+        <VerticalStackLayout Grid.Row="1" Padding="20,8,20,16" Spacing="6">
+            <Button Text="{Binding StartStopText}" Command="{Binding ToggleCommand}"
+                    FontSize="20" HeightRequest="60" />
+            <Label Text="{Binding StatusText}" IsVisible="{Binding HasStatusText}" HorizontalOptions="Center" />
+        </VerticalStackLayout>
+
         <!-- In-app microphone disclosure (§6.3), shown until accepted. -->
-        <Grid IsVisible="{Binding ShowDisclosure}" BackgroundColor="#CC000000">
+        <Grid Grid.RowSpan="2" IsVisible="{Binding ShowDisclosure}" BackgroundColor="#CC000000">
             <Border Margin="24" Padding="20" VerticalOptions="Center" StrokeShape="RoundRectangle 12"
                     BackgroundColor="{AppThemeBinding Light=White, Dark={StaticResource Gray900}}">
                 <VerticalStackLayout Spacing="12">
