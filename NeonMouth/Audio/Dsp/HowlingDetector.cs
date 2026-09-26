@@ -1,11 +1,17 @@
 namespace NeonMouth.Audio.Dsp;
 
 /// <summary>
-/// Real-time feedback (Larsen) detection and ducking (§4.1). Every hop it takes a windowed FFT of
-/// the signal and looks for one narrow peak towering over the rest of the spectrum at the same
+/// Real-time feedback (Larsen) detection and suppression (§4.1). Every hop it takes a windowed FFT
+/// of the signal and looks for one narrow peak towering over the rest of the spectrum at the same
 /// frequency for several consecutive windows, with no harmonics (voice and singing are harmonic
-/// series; feedback is a lone sine). On detection <see cref="DuckGain"/> drops quickly to a floor (never to
-/// silence) and recovers gradually once the howl has been gone for a while.
+/// series; feedback is a lone sine).
+/// <para>
+/// A detection places a narrow notch at the howling frequency, deepening it on repeats, so only
+/// that pitch is cut and the rest of the sound keeps its level. Notches hold for a while (otherwise
+/// the howl rebuilds within seconds) and then fade out. There is deliberately no whole-output duck:
+/// device tests showed a full-depth notch always breaks a real feedback loop, so a tone that
+/// survives one is the user's own voice (a held sung note), and ducking it only frustrates.
+/// </para>
 /// Allocation-free after construction; call <see cref="Process"/> on the audio thread.
 /// </summary>
 public sealed class HowlingDetector
@@ -13,13 +19,21 @@ public sealed class HowlingDetector
     const int FftSize = 1024;
     const int Hop = FftSize / 2;
     const float PeakToAverageDb = 24f;     // howl peak vs mean of the other bins
+    const float HighPeakToAverageDb = 30f; // stricter above HighFrequencyHz, where sibilants live
+    const float HighFrequencyHz = 4000f;
     const float HarmonicRejectDb = 25f;    // a harmonic within this of the peak means voice, not howl
     const float MinPeakDbfs = -45f;        // ignore quiet tones (hum, noise floor)
     const int FramesToTrigger = 8;         // ~85 ms at 48 kHz
-    const float DuckStepDb = -8f;          // each fresh detection while ducked goes further down
-    const float DuckFloorDb = -24f;
-    const float HoldSeconds = 1.5f;
-    const float RecoverDbPerSecond = 6f;
+
+    const int MaxNotches = 4;
+    const float NotchStepDb = -10f;        // each detection at a notched frequency goes deeper
+    const float NotchFloorDb = -30f;
+    const float NotchStepSeconds = 0.4f;   // let a notch act (through Bluetooth delay) before deepening
+    const float NotchHoldSeconds = 20f;
+    const float NotchReleaseDbPerSecond = 0.5f;
+    const float NotchBandwidthHz = 40f;    // ~1 FFT bin; the frequency estimate is good to a few Hz
+
+    const float IndicatorSeconds = 3f;     // how long the UI shows protection after a detection
 
     readonly int _sampleRate;
     readonly float[] _ring = new float[FftSize];
@@ -30,15 +44,21 @@ public sealed class HowlingDetector
     readonly float[] _cos = new float[FftSize / 2];
     readonly float[] _sin = new float[FftSize / 2];
     readonly int _maxBin;
+    readonly int _highBin;
     readonly float _windowPowerGain;
+
+    readonly Biquad[] _notch = new Biquad[MaxNotches];
+    readonly float[] _notchHz = new float[MaxNotches];
+    readonly float[] _notchDb = new float[MaxNotches];        // target depth, ≤ 0; 0 = slot free
+    readonly float[] _notchAppliedDb = new float[MaxNotches]; // depth the coefficients were set for
+    readonly int[] _notchHold = new int[MaxNotches];
+    readonly int[] _notchAge = new int[MaxNotches];           // samples since last deepened
 
     int _writePos;
     int _sinceLastAnalysis;
     int _lastPeakBin = -10;
     int _consecutive;
-    float _duckDb;           // current target attenuation, ≤ 0
-    float _currentGain = 1f; // smoothed linear gain actually applied
-    int _holdSamples;
+    int _sinceTrigger = int.MaxValue;
 
     // --- Temporary Phase 3 tuning diagnostics. Remove once thresholds are settled. ---
     /// <summary>Set from the platform layer to log detector decisions; null disables all logging.</summary>
@@ -68,30 +88,30 @@ public sealed class HowlingDetector
             _cos[i] = MathF.Cos(-2f * MathF.PI * i / FftSize);
             _sin[i] = MathF.Sin(-2f * MathF.PI * i / FftSize);
         }
+        for (int i = 0; i < MaxNotches; i++) _notch[i] = new Biquad();
         // A full-scale sine's bin magnitude is amplitude * windowSum / 2.
         _windowPowerGain = windowSum * windowSum / 4f;
         // Feedback lives roughly in 100 Hz..10 kHz; skip DC/rumble and the top end.
         _maxBin = Math.Min(FftSize / 2 - 2, (int)(10_000f * FftSize / sampleRate));
+        _highBin = (int)(HighFrequencyHz * FftSize / sampleRate);
     }
 
+    /// <summary>Feedback protection on/off (user setting). Turning it off clears the notches.</summary>
     public bool Enabled { get; set; } = true;
 
-    /// <summary>True while output is reduced because of feedback (for the protection indicator).</summary>
-    public bool IsDucking => _duckDb < -0.5f || _currentGain < 0.94f;
+    /// <summary>True for a few seconds after a detection (for the protection indicator).</summary>
+    public bool IsSuppressing => _sinceTrigger < IndicatorSeconds * _sampleRate;
 
     /// <summary>Frequency of the last detected howl in Hz, or 0.</summary>
     public float LastHowlHz { get; private set; }
 
-    /// <summary>Linear gain to apply to the output this block.</summary>
-    public float DuckGain => _currentGain;
-
-    /// <summary>Analyse a block and advance the duck envelope. Does not modify the block.</summary>
-    public void Process(ReadOnlySpan<float> block)
+    /// <summary>Analyse a block, advance the notch envelopes, then notch the block in place.</summary>
+    public void Process(Span<float> block)
     {
         if (!Enabled)
         {
-            _duckDb = 0f;
-            _currentGain = 1f;
+            if (_sinceTrigger != int.MaxValue || _notchDb.AsSpan().IndexOfAnyExcept(0f) >= 0)
+                Reset();
             return;
         }
 
@@ -105,15 +125,28 @@ public sealed class HowlingDetector
                 Analyse();
             }
         }
+        if (_sinceTrigger < int.MaxValue - block.Length) _sinceTrigger += block.Length;
+        else _sinceTrigger = int.MaxValue;
 
-        // Envelope: hold after the last detection, then recover slowly. Attack is fast but ramped
-        // over the block so there's no click.
-        if (_holdSamples > 0) _holdSamples -= block.Length;
-        else if (_duckDb < 0f) _duckDb = MathF.Min(0f, _duckDb + RecoverDbPerSecond * block.Length / _sampleRate);
+        for (int n = 0; n < MaxNotches; n++)
+        {
+            if (_notchDb[n] == 0f) continue;
+            if (_notchAge[n] < int.MaxValue - block.Length) _notchAge[n] += block.Length;
+            if (_notchHold[n] > 0) _notchHold[n] -= block.Length;
+            else _notchDb[n] = MathF.Min(0f, _notchDb[n] + NotchReleaseDbPerSecond * block.Length / _sampleRate);
+            if (_notchDb[n] == 0f) continue; // released; the slot is free again
 
-        float target = OutputLimiter.DbToLinear(_duckDb);
-        float coeff = target < _currentGain ? 0.5f : 1f; // fast down, recovery already slow in dB
-        _currentGain += (target - _currentGain) * coeff;
+            // Recomputing coefficients costs a few transcendentals; only do it in ~0.1 dB steps.
+            if (MathF.Abs(_notchDb[n] - _notchAppliedDb[n]) > 0.1f)
+            {
+                _notchAppliedDb[n] = _notchDb[n];
+                float q = Math.Clamp(_notchHz[n] / NotchBandwidthHz, 4f, 20f);
+                _notch[n].SetPeaking(_sampleRate, _notchHz[n], q, _notchDb[n]);
+            }
+
+            var filter = _notch[n];
+            for (int i = 0; i < block.Length; i++) block[i] = filter.Process(block[i]);
+        }
     }
 
     public void Reset()
@@ -123,9 +156,10 @@ public sealed class HowlingDetector
         _sinceLastAnalysis = 0;
         _consecutive = 0;
         _lastPeakBin = -10;
-        _duckDb = 0f;
-        _currentGain = 1f;
-        _holdSamples = 0;
+        _sinceTrigger = int.MaxValue;
+        Array.Clear(_notchDb);
+        Array.Clear(_notchAppliedDb);
+        foreach (var f in _notch) f.Reset();
         LastHowlHz = 0f;
     }
 
@@ -163,7 +197,7 @@ public sealed class HowlingDetector
         // Split out so the diagnostics can say which clause rejected a candidate; short-circuit
         // order is unchanged.
         bool loud = peakDbfs > MinPeakDbfs;
-        bool narrow = ratioDb > PeakToAverageDb;
+        bool narrow = ratioDb > (peakBin >= _highBin ? HighPeakToAverageDb : PeakToAverageDb);
         bool harmonic = loud && narrow && HasHarmonics(peakBin, peakBand, minBin);
         bool tonal = loud && narrow && !harmonic;
 
@@ -176,14 +210,65 @@ public sealed class HowlingDetector
 
         if (_consecutive >= FramesToTrigger)
         {
-            // Further detections while still howling duck deeper, once per trigger period.
             _consecutive = 0;
-            _duckDb = MathF.Max(DuckFloorDb, MathF.Min(_duckDb, 0f) + DuckStepDb);
-            _holdSamples = (int)(HoldSeconds * _sampleRate);
-            LastHowlHz = peakBin * (float)_sampleRate / FftSize;
-            Diagnostics?.Invoke($"HOWL TRIGGER {LastHowlHz:0} Hz (bin {peakBin}) " +
-                $"peak={peakDbfs:0.0} dBFS ratio={ratioDb:0.0} dB -> duck={_duckDb:0.0} dB");
+            float hz = InterpolatePeakHz(peakBin, minBin);
+            string action = Suppress(hz);
+            Diagnostics?.Invoke($"HOWL TRIGGER {hz:0} Hz (bin {peakBin}) " +
+                $"peak={peakDbfs:0.0} dBFS ratio={ratioDb:0.0} dB -> {action}");
         }
+    }
+
+    /// <summary>Place or deepen a notch at <paramref name="hz"/>. Returns a log description.</summary>
+    string Suppress(float hz)
+    {
+        int slot = -1;
+        for (int n = 0; n < MaxNotches; n++)
+            if (_notchDb[n] < 0f && MathF.Abs(_notchHz[n] - hz) < MathF.Max(NotchBandwidthHz, 0.05f * hz))
+                slot = n;
+
+        if (slot >= 0 && (_notchAge[slot] < NotchStepSeconds * _sampleRate || _notchDb[slot] <= NotchFloorDb + 0.5f))
+        {
+            // Still taking effect, or already at full depth (then it's a held note, not feedback).
+            _notchHold[slot] = (int)(NotchHoldSeconds * _sampleRate);
+            return Diagnostics is null ? "" : $"notch {_notchHz[slot]:0} Hz {_notchDb[slot]:0} dB (kept)";
+        }
+
+        _sinceTrigger = 0;
+        LastHowlHz = hz;
+        if (slot < 0)
+        {
+            // A free slot, or else the shallowest notch (the one least needed).
+            slot = 0;
+            for (int n = 1; n < MaxNotches; n++)
+                if (_notchDb[n] > _notchDb[slot]) slot = n;
+            if (_notchDb[slot] == 0f) _notch[slot].Reset();
+            _notchHz[slot] = hz;
+            _notchDb[slot] = 0f;
+        }
+        else
+        {
+            _notchHz[slot] = 0.5f * (_notchHz[slot] + hz);
+        }
+        _notchDb[slot] = MathF.Max(NotchFloorDb, _notchDb[slot] + NotchStepDb);
+        _notchHold[slot] = (int)(NotchHoldSeconds * _sampleRate);
+        _notchAge[slot] = 0;
+        _notchAppliedDb[slot] = 1f; // frequency may have moved: force new coefficients
+        return Diagnostics is null ? "" : $"notch {_notchHz[slot]:0} Hz {_notchDb[slot]:0} dB";
+    }
+
+    /// <summary>Parabolic interpolation on the log power of the peak and its neighbours.</summary>
+    float InterpolatePeakHz(int peakBin, int minBin)
+    {
+        float offset = 0f;
+        if (peakBin > minBin && peakBin < _maxBin)
+        {
+            float a = MathF.Log(_re[peakBin - 1] + 1e-20f);
+            float b = MathF.Log(_re[peakBin] + 1e-20f);
+            float c = MathF.Log(_re[peakBin + 1] + 1e-20f);
+            float denom = a - 2f * b + c;
+            if (denom < 0f) offset = Math.Clamp(0.5f * (a - c) / denom, -0.5f, 0.5f);
+        }
+        return (peakBin + offset) * _sampleRate / FftSize;
     }
 
     /// <summary>
@@ -207,14 +292,17 @@ public sealed class HowlingDetector
         if (++_hopsSinceLog < hopsPerSecond) return;
 
         string verdict = !_worstLoud ? $"quiet (<{MinPeakDbfs:0} dBFS)"
-            : !_worstNarrow ? $"broadband (<{PeakToAverageDb:0} dB)"
+            : !_worstNarrow ? "broadband"
             : _worstHarmonic ? "harmonic -> voice"
             : "TONAL";
+        string notches = "";
+        for (int n = 0; n < MaxNotches; n++)
+            if (_notchDb[n] < 0f) notches += $" {_notchHz[n]:0}Hz/{_notchDb[n]:0.0}";
         Diagnostics?.Invoke(
             $"Howl: top {_worstBin * (float)_sampleRate / FftSize:0} Hz " +
             $"peak={_worstPeakDbfs:0.0} dBFS ratio={_worstRatioDb:0.0} dB {verdict}; " +
             $"tonal {_tonalHops}/{hopsPerSecond} hops, run={_consecutive}/{FramesToTrigger}, " +
-            $"duck={_duckDb:0.0} dB gain={_currentGain:0.00}");
+            $"notches:{(notches.Length == 0 ? " none" : notches)}");
 
         _hopsSinceLog = 0;
         _tonalHops = 0;

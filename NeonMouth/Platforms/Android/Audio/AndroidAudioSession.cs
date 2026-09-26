@@ -26,7 +26,7 @@ sealed class AndroidAudioSession : IAudioSession
     readonly AudioManager _audioManager;
     readonly DuplexAudioEngine _engine = new();
     readonly Lock _gate = new();
-    SessionSettings _settings = new(VoiceEffectKind.Natural, 0.7f, 0.5f);
+    SessionSettings _settings = new(VoiceEffectKind.Natural, 0.7f, 0.5f, true);
     AudioDevice? _input;
     AudioDevice? _output;
     BluetoothA2dp? _a2dp;
@@ -74,7 +74,7 @@ sealed class AndroidAudioSession : IAudioSession
             inputs.Add(new AudioDevice(d.Id, $"usb_mic:{d.ProductName}", $"USB microphone ({d.ProductName})", AudioDeviceKind.UsbMic));
         foreach (var d in devices.Where(d => BluetoothMicTypes.Contains(d.Type)))
             inputs.Add(new AudioDevice(d.Id, $"bt_mic:{d.Address}", $"Bluetooth mic: {d.ProductName}", AudioDeviceKind.BluetoothMic,
-                BluetoothAddress: d.Address, IsLoudspeaker: IsLoudspeaker(d.Address)));
+                BluetoothAddress: d.Address));
 
         var outputs = new List<AudioDevice>();
         foreach (var d in _audioManager.GetDevices(GetDevicesTargets.Outputs) ?? [])
@@ -85,7 +85,7 @@ sealed class AndroidAudioSession : IAudioSession
             {
                 string key = string.IsNullOrEmpty(d.Address) ? d.ProductName ?? "" : d.Address;
                 outputs.Add(new AudioDevice(d.Id, $"bt:{key}", $"Bluetooth: {d.ProductName}", AudioDeviceKind.BluetoothSpeaker,
-                    BluetoothAddress: d.Address, IsLoudspeaker: IsLoudspeaker(d.Address)));
+                    BluetoothAddress: d.Address));
             }
         }
         AddInactiveBluetoothSpeakers(outputs);
@@ -106,27 +106,7 @@ sealed class AndroidAudioSession : IAudioSession
             // Negative IDs never collide with AudioDeviceInfo IDs; stable for the process lifetime.
             int id = -1 - (key.GetHashCode() & 0x7FFFFFFF) % 1_000_000;
             outputs.Add(new AudioDevice(id, key, $"Bluetooth: {bt.Name} (not active)",
-                AudioDeviceKind.BluetoothSpeaker, NeedsActivation: true, BluetoothAddress: bt.Address,
-                IsLoudspeaker: IsLoudspeaker(bt.Address)));
-        }
-    }
-
-    /// <summary>
-    /// Whether a Bluetooth device plays out loud. Only headphones/earbuds classes count as safe;
-    /// unknown classes are treated as loudspeakers because their own mic would feed back.
-    /// </summary>
-    bool IsLoudspeaker(string? address)
-    {
-        if (_adapter is null || string.IsNullOrEmpty(address) || !HasPermission(global::Android.Manifest.Permission.BluetoothConnect))
-            return true;
-        try
-        {
-            var deviceClass = _adapter.GetRemoteDevice(address)?.BluetoothClass?.DeviceClass;
-            return deviceClass is not (DeviceClass.AudioVideoHeadphones or DeviceClass.AudioVideoWearableHeadset);
-        }
-        catch (Exception ex) when (ex is Java.Lang.SecurityException or Java.Lang.IllegalArgumentException)
-        {
-            return true;
+                AudioDeviceKind.BluetoothSpeaker, NeedsActivation: true, BluetoothAddress: bt.Address));
         }
     }
 
@@ -149,7 +129,7 @@ sealed class AndroidAudioSession : IAudioSession
         }
     }
 
-    public bool IsFeedbackProtectionActive => _engine.IsRunning && _engine.Processor?.Howling.IsDucking == true;
+    public bool IsFeedbackProtectionActive => _engine.IsRunning && _engine.Processor?.Howling.IsSuppressing == true;
 
     public (float Input, float Output) GetLevels() =>
         _engine.IsRunning && _engine.Processor is { } p ? (p.InputPeak, p.OutputPeak) : (0f, 0f);
@@ -309,6 +289,7 @@ sealed class AndroidAudioSession : IAudioSession
         global::Android.Util.Log.Info("NeonMouth", $"ApplySettings effect={_settings.Effect}");
         p.Intensity = _settings.Intensity;
         p.Limiter.UserGain = _settings.OutputGain;
+        p.Howling.Enabled = _settings.FeedbackProtection;
     }
 
     void OnStreamError(int error)

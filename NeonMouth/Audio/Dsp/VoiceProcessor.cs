@@ -1,7 +1,7 @@
 namespace NeonMouth.Audio.Dsp;
 
 /// <summary>
-/// The platform-independent signal chain (§5.3): input gain → effect → howling detection (ducks)
+/// The platform-independent signal chain (§5.3): input gain → effect → howling detection (notches)
 /// → output limiter. Parameters may be changed from any thread;
 /// they are read once per block on the audio thread.
 /// </summary>
@@ -75,7 +75,6 @@ public sealed class VoiceProcessor
 
         // Analysed before the limiter, which would flatten the growth of a howl.
         Howling.Process(block);
-        Limiter.DuckGain = Howling.DuckGain;
         Limiter.Process(block);
         for (int i = 0; i < block.Length; i++) outPeak = MathF.Max(outPeak, MathF.Abs(block[i]));
         OutputPeak = outPeak;

@@ -21,6 +21,7 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty] VoiceEffectKind _selectedEffect;
     [ObservableProperty] double _intensity;
     [ObservableProperty] double _outputGain;
+    [ObservableProperty] bool _feedbackProtection;
 
     // Pickers bind to name lists + SelectedIndex; SelectedItem binding proved unreliable (see Effects).
     [ObservableProperty] IReadOnlyList<string> _inputNames = [];
@@ -41,17 +42,14 @@ public partial class MainViewModel : ObservableObject
 
     public bool HasPairingProblem => PairingProblem is not null;
 
-    /// <summary>Non-blocking advice about the selected pairing (feedback risk, call-quality audio).</summary>
+    /// <summary>Non-blocking advice about the selected pairing (call-quality audio).</summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasPairingWarning))]
     string? _pairingWarning;
 
     public bool HasPairingWarning => PairingWarning is not null;
 
-    /// <summary>Only the feedback warning can be dismissed (one-time, §4.1).</summary>
-    [ObservableProperty] bool _canDismissPairingWarning;
-
-    /// <summary>Howling protection is currently reducing the volume (§4.1 indicator).</summary>
+    /// <summary>Howling protection just acted (§4.1 indicator).</summary>
     [ObservableProperty] bool _feedbackProtectionActive;
 
     [ObservableProperty] bool _inputAutoSelected;
@@ -93,6 +91,7 @@ public partial class MainViewModel : ObservableObject
         SelectedEffect = Enum.TryParse<VoiceEffectKind>(Preferences.Default.Get(SettingsKeys.Effect, ""), out var e) ? e : VoiceEffectKind.Witch;
         Intensity = Preferences.Default.Get(SettingsKeys.Intensity, 0.7);
         OutputGain = Preferences.Default.Get(SettingsKeys.OutputGain, 0.5);
+        FeedbackProtection = Preferences.Default.Get(SettingsKeys.FeedbackProtection, true);
         ShowDisclosure = !Preferences.Default.Get(SettingsKeys.DisclosureAccepted, false);
 
         _session.StatusChanged += (_, s) => MainThread.BeginInvokeOnMainThread(() => ApplyStatus(s));
@@ -111,7 +110,7 @@ public partial class MainViewModel : ObservableObject
         });
     }
 
-    SessionSettings CurrentSettings => new(SelectedEffect, (float)Intensity, (float)OutputGain);
+    SessionSettings CurrentSettings => new(SelectedEffect, (float)Intensity, (float)OutputGain, FeedbackProtection);
 
     // Picker binds by index: SelectedItem-to-enum binding silently failed to update SelectedEffect.
     public int SelectedEffectIndex
@@ -169,7 +168,8 @@ public partial class MainViewModel : ObservableObject
     /// <summary>
     /// Android keeps only one Bluetooth audio device active (confirmed on the Pixel 7a: activating
     /// one makes the other's A2DP and SCO links unavailable), so a Bluetooth mic only works with
-    /// wired output or with the same headset. A loudspeaker's own mic would feed straight back.
+    /// wired output or with the same headset. Using a speaker's own mic is left to the user's judgement:
+    /// Android can't tell speakers from headsets (the JBL Clip+ reports the same class as the Pixel Buds).
     /// </summary>
     void UpdatePairing()
     {
@@ -179,35 +179,13 @@ public partial class MainViewModel : ObservableObject
             ({ IsBluetoothMic: true }, { IsBluetooth: true }) when input.BluetoothAddress != output.BluetoothAddress =>
                 "A Bluetooth mic can't be used with a different Bluetooth speaker: Android only keeps one Bluetooth " +
                 "audio device active. Use the phone, wired or USB mic with the speaker, or wired headphones with the Bluetooth mic.",
-            ({ IsBluetoothMic: true, IsLoudspeaker: true }, { IsBluetooth: true }) =>
-                "This speaker's own mic would pick up its sound and howl. Choose a different mic.",
             _ => null,
         };
 
-        bool feedback = false;
-        if (PairingProblem is not null)
-            PairingWarning = null;
-        else if (input is { IsBluetoothMic: true } && output is { IsBluetooth: true })
-            PairingWarning = "Using the headset's own mic switches it to Android's call-quality link: lower sound quality and a bit more delay.";
-        else if (input is not null && !input.IsBluetoothMic && output is { IsBluetooth: true }
-                 && !Preferences.Default.Get(SettingsKeys.FeedbackWarningDismissed, false))
-        {
-            feedback = true;
-            PairingWarning = "Feedback risk: the mic can pick up the speaker and howl. Keep the volume moderate and the " +
-                "speaker away from the mic, not pointing at you. NeonMouth lowers the volume automatically if it howls.";
-        }
-        else
-            PairingWarning = null;
-        CanDismissPairingWarning = feedback;
+        PairingWarning = PairingProblem is null && input is { IsBluetoothMic: true } && output is { IsBluetooth: true }
+            ? "Using the Bluetooth device's own mic switches it to Android's call-quality link: lower sound quality and a bit more delay."
+            : null;
         ToggleCommand.NotifyCanExecuteChanged();
-    }
-
-    [RelayCommand]
-    void DismissPairingWarning()
-    {
-        if (!CanDismissPairingWarning) return;
-        Preferences.Default.Set(SettingsKeys.FeedbackWarningDismissed, true);
-        UpdatePairing();
     }
 
     partial void OnSelectedEffectChanged(VoiceEffectKind value)
@@ -226,6 +204,12 @@ public partial class MainViewModel : ObservableObject
     partial void OnOutputGainChanged(double value)
     {
         Preferences.Default.Set(SettingsKeys.OutputGain, value);
+        _session?.Update(CurrentSettings);
+    }
+
+    partial void OnFeedbackProtectionChanged(bool value)
+    {
+        Preferences.Default.Set(SettingsKeys.FeedbackProtection, value);
         _session?.Update(CurrentSettings);
     }
 
