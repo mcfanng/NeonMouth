@@ -53,7 +53,6 @@ What you hear always lags slightly behind what you say. How much depends on the 
 - **Feedback protection has limits.** It catches howling, but not the room echo you get with the phone mic close to a loud speaker. Keep the speaker away from the phone and the volume sensible. Bluetooth call-link mics occasionally cause a false, barely audible notch.
 - **Slight crackle is possible with a Bluetooth speaker** on some setups: the output buffer stops growing at a cap to keep the delay down.
 - **The effects are "decent, not studio".** The pitch shifter is tuned for low delay, not maximum fidelity.
-- No recording, no custom effects, and no settings screen yet.
 
 ## Privacy
 
