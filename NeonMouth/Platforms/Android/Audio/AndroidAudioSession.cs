@@ -232,8 +232,11 @@ sealed class AndroidAudioSession : IAudioSession
                     // While its mic is in use, a headset only plays over the SCO link (A2DP is suspended).
                     if (output.BluetoothAddress == input.BluetoothAddress) outputId = sco.Id;
                 }
+                // Voice recognition gets the exclusive low-latency path (~2 ms vs ~35 ms for voice
+                // communication, measured on a Pixel 7a) and still captures from SCO. It has no echo
+                // cancelling, but Bluetooth headsets and speakers do their own.
                 _engine.Start(input.Id, outputId,
-                    btMic ? AAudioNative.InputPresetVoiceCommunication : AAudioNative.InputPresetVoicePerformance);
+                    btMic ? AAudioNative.InputPresetVoiceRecognition : AAudioNative.InputPresetVoicePerformance);
                 var actual = _engine.ActualDeviceIds;
                 global::Android.Util.Log.Info(Tag, $"Start: requested in={input.Id} ({input.Name}) out={outputId} ({output.Name}); " +
                     $"opened in={actual.Input} out={actual.Output}; mode={_audioManager.Mode}; " +

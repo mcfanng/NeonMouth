@@ -27,6 +27,7 @@ static unsafe partial class AAudioNative
     public const int ContentTypeSpeech = 1;
     public const int InputPresetVoiceCommunication = 7;
     public const int InputPresetVoicePerformance = 10;
+    public const int InputPresetVoiceRecognition = 6;
 
     [LibraryImport(Lib)] public static partial int AAudio_createStreamBuilder(out nint builder);
     [LibraryImport(Lib)] public static partial int AAudioStreamBuilder_openStream(nint builder, out nint stream);

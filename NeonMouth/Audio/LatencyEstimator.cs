@@ -36,7 +36,7 @@ public static class LatencyEstimator
 
         var (inMin, inMax) = input switch
         {
-            { IsBluetoothMic: true } => (40.0, 100.0),  // HFP/SCO call link
+            { IsBluetoothMic: true } => (10.0, 70.0),  // HFP/SCO call link, voice-recognition path
             { IsUsb: true } or { Kind: AudioDeviceKind.UsbMic } => (5.0, 15.0),
             _ => (0.0, 0.0),
         };

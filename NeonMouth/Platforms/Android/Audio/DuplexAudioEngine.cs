@@ -40,7 +40,7 @@ sealed unsafe class DuplexAudioEngine : IDisposable
     /// <summary>Raised on the audio thread when a stream reports an error (e.g. device disconnected).</summary>
     public event Action<int>? StreamError;
 
-    /// <param name="inputPreset">Bluetooth SCO mics only capture with a voice-communication preset.</param>
+    /// <param name="inputPreset">Bluetooth mics use voice recognition, which gets the low-latency path.</param>
     public void Start(int inputDeviceId, int outputDeviceId, int inputPreset = InputPresetVoicePerformance)
     {
         if (IsRunning) throw new InvalidOperationException("Engine already running.");
@@ -185,6 +185,8 @@ sealed unsafe class DuplexAudioEngine : IDisposable
         int tuneCooldown = Math.Max(1, SampleRate / 10 / frames);
         int nextTuneBurst = DrainBursts;
         int xruns = 0;
+        // Input queue cap: the smallest queue seen over a second is input that never drains.
+        long minQueue = long.MaxValue;
 
         fixed (float* inBuf = _inBuffer)
         fixed (float* outBuf = _outBuffer)
@@ -204,8 +206,17 @@ sealed unsafe class DuplexAudioEngine : IDisposable
                 }
                 else
                 {
+                    // Late input is padded with silence and the late frames then queue up for good, so
+                    // each hiccup would add delay (seen with Bluetooth mics). Drop that backlog to one burst.
+                    if (burst % statsBursts == 0 && minQueue != long.MaxValue)
+                    {
+                        if (minQueue - frames >= frames) TrimInput(input, inBuf, minQueue - frames, frames);
+                        minQueue = long.MaxValue;
+                    }
+
                     read = AAudioStream_read(input, inBuf, frames, 0);
                     if (read < 0) return read;
+                    minQueue = Math.Min(minQueue, AAudioStream_getFramesWritten(input) - AAudioStream_getFramesRead(input));
                     if (read < frames) block[read..].Clear();
                     framesRead += read;
                     for (int f = 0; f < read; f++) rawPeak = Math.Max(rawPeak, Math.Abs(block[f]));
@@ -268,6 +279,18 @@ sealed unsafe class DuplexAudioEngine : IDisposable
             }
         }
         return 0;
+    }
+
+    static void TrimInput(nint input, float* scratch, long excess, int frames)
+    {
+        long dropped = 0;
+        while (dropped < excess)
+        {
+            int n = AAudioStream_read(input, scratch, (int)Math.Min(frames, excess - dropped), 0);
+            if (n <= 0) break;
+            dropped += n;
+        }
+        global::Android.Util.Log.Info("NeonMouth", $"Input queue trimmed: dropped {dropped} frames");
     }
 
     /// <summary>
