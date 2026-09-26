@@ -225,7 +225,7 @@ sealed class AndroidAudioSession : IAudioSession
 
     void OnStreamError(int error)
     {
-        // AAudio error callback thread: mute already happened in the engine; tear down elsewhere.
+        // Engine audio thread: mute already happened in the engine; tear down elsewhere.
         _engine.Mute();
         Task.Run(() =>
         {
