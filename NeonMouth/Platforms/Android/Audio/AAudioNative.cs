@@ -25,6 +25,7 @@ static unsafe partial class AAudioNative
     public const int ContentTypeSpeech = 1;
     public const int InputPresetVoiceCommunication = 7;
     public const int InputPresetVoicePerformance = 10;
+    public const int InputPresetVoiceRecognition = 6;
 
     [LibraryImport(Lib)] public static partial int AAudio_createStreamBuilder(out nint builder);
     [LibraryImport(Lib)] public static partial int AAudioStreamBuilder_openStream(nint builder, out nint stream);
@@ -50,6 +51,11 @@ static unsafe partial class AAudioNative
     [LibraryImport(Lib)] public static partial int AAudioStream_getDeviceId(nint stream);
     [LibraryImport(Lib)] public static partial int AAudioStream_getChannelCount(nint stream);
     [LibraryImport(Lib)] public static partial int AAudioStream_getFramesPerBurst(nint stream);
+    [LibraryImport(Lib)] public static partial long AAudioStream_getFramesRead(nint stream);
+    [LibraryImport(Lib)] public static partial long AAudioStream_getFramesWritten(nint stream);
+    [LibraryImport(Lib)] public static partial int AAudioStream_getXRunCount(nint stream);
+    [LibraryImport(Lib)] public static partial int AAudioStream_getBufferSizeInFrames(nint stream);
+    [LibraryImport(Lib)] public static partial int AAudioStream_getBufferCapacityInFrames(nint stream);
     [LibraryImport(Lib)] public static partial int AAudioStream_setBufferSizeInFrames(nint stream, int numFrames);
     [LibraryImport(Lib)] public static partial int AAudioStream_getPerformanceMode(nint stream);
     [LibraryImport(Lib)] public static partial int AAudioStream_getSharingMode(nint stream);

@@ -13,7 +13,7 @@
         </HorizontalStackLayout>
     </Shell.TitleView>
 
-    <Grid>
+    <Grid RowDefinitions="*,Auto">
         <ScrollView>
             <VerticalStackLayout Padding="20" Spacing="16">
 
@@ -30,8 +30,13 @@
                                 SelectedIndexChanged="OnOutputPickerChanged" />
                         <Label Text="Auto-selected" FontSize="12" TextColor="{StaticResource Gray500}"
                                IsVisible="{Binding OutputAutoSelected}" />
-                        <Label Text="✓ Recommended: phone mic + wired headphones (lowest latency)."
-                               FontSize="12" TextColor="{AppThemeBinding Light={StaticResource AccentOnLight}, Dark={StaticResource Accent}}" IsVisible="{Binding IsRecommendedSetup}" />
+                        <!-- Latency badge (§3.1, §4.2): a static estimate, shown before Start. -->
+                        <Border Padding="10,6" StrokeShape="RoundRectangle 14" HorizontalOptions="Start"
+                                IsVisible="{Binding HasLatencyEstimate}">
+                            <Label Text="{Binding LatencyEstimate}" FontSize="13" FontAttributes="Bold" />
+                        </Border>
+                        <Label Text="Most of this delay is the Bluetooth link itself. The app can't shorten it."
+                               FontSize="12" TextColor="{StaticResource Gray500}" IsVisible="{Binding LatencyMostlyBluetooth}" />
                         <Button Text="Rescan" Command="{Binding RescanCommand}" HorizontalOptions="Start" />
                     </VerticalStackLayout>
                 </Border>
@@ -50,7 +55,7 @@
                 <Label Text="{Binding PairingProblem}" IsVisible="{Binding HasPairingProblem}"
                        TextColor="OrangeRed" FontAttributes="Bold" />
 
-                <!-- Call-quality advice for a Bluetooth device's own mic. -->
+                <!-- Bluetooth mic limitations (call quality, fading on held notes). -->
                 <Border Padding="14" StrokeShape="RoundRectangle 10" IsVisible="{Binding HasPairingWarning}">
                     <Label Text="{Binding PairingWarning}" />
                 </Border>
@@ -86,15 +91,6 @@
                     <Switch Grid.Column="1" IsToggled="{Binding FeedbackProtection}" VerticalOptions="Center" />
                 </Grid>
 
-                <Button Text="{Binding StartStopText}" Command="{Binding ToggleCommand}"
-                        FontSize="20" HeightRequest="60" />
-
-                <Label Text="{Binding StatusText}" IsVisible="{Binding HasStatusText}" HorizontalOptions="Center" />
-
-                <Label Text="⚠ Feedback detected and reduced. Move the speaker away from the mic or turn it down."
-                       IsVisible="{Binding FeedbackProtectionActive}" TextColor="OrangeRed" FontAttributes="Bold"
-                       HorizontalTextAlignment="Center" />
-
                 <VerticalStackLayout Spacing="4">
                     <Label Text="Mic level" FontSize="12" />
                     <ProgressBar Progress="{Binding InputLevel}" />
@@ -104,8 +100,19 @@
             </VerticalStackLayout>
         </ScrollView>
 
+        <!-- Start/Stop stays pinned at the bottom, like the title bar at the top, with the feedback
+             warning above it so it's seen without scrolling. -->
+        <VerticalStackLayout Grid.Row="1" Padding="20,8,20,16" Spacing="6">
+            <Label Text="⚠ Feedback detected and reduced. Move the speaker away from the mic or turn it down."
+                   IsVisible="{Binding FeedbackProtectionActive}" TextColor="OrangeRed" FontAttributes="Bold"
+                   HorizontalTextAlignment="Center" />
+            <Button Text="{Binding StartStopText}" Command="{Binding ToggleCommand}"
+                    FontSize="20" HeightRequest="60" />
+            <Label Text="{Binding StatusText}" IsVisible="{Binding HasStatusText}" HorizontalOptions="Center" />
+        </VerticalStackLayout>
+
         <!-- In-app microphone disclosure (§6.3), shown until accepted. -->
-        <Grid IsVisible="{Binding ShowDisclosure}" BackgroundColor="#CC000000">
+        <Grid Grid.RowSpan="2" IsVisible="{Binding ShowDisclosure}" BackgroundColor="#CC000000">
             <Border Margin="24" Padding="20" VerticalOptions="Center" StrokeShape="RoundRectangle 12"
                     BackgroundColor="{AppThemeBinding Light=White, Dark={StaticResource Gray900}}">
                 <VerticalStackLayout Spacing="12">

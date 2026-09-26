@@ -12,6 +12,7 @@ sealed class UnsupportedAudioSession : IAudioSession
     public DeviceList GetDevices() => new([], [], false);
     public (float Input, float Output) GetLevels() => (0, 0);
     public bool IsFeedbackProtectionActive => false;
+    public LatencyProbe LatencyProbe => LatencyProbe.Unknown;
     public Task<bool> RequestPermissionsAsync() => Task.FromResult(false);
     public Task StartAsync(SessionSettings settings, AudioDevice input, AudioDevice output) => Task.CompletedTask;
     public void SwitchDevices(AudioDevice input, AudioDevice output) { }
