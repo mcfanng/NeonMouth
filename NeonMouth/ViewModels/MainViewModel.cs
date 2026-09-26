@@ -42,7 +42,7 @@ public partial class MainViewModel : ObservableObject
 
     public bool HasPairingProblem => PairingProblem is not null;
 
-    /// <summary>Non-blocking advice about the selected pairing (call-quality audio).</summary>
+    /// <summary>Non-blocking advice about the selected pairing (Bluetooth mic limitations).</summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasPairingWarning))]
     string? _pairingWarning;
@@ -194,8 +194,11 @@ public partial class MainViewModel : ObservableObject
             _ => null,
         };
 
-        PairingWarning = PairingProblem is null && input is { IsBluetoothMic: true } && output is { IsBluetooth: true }
-            ? "Using the Bluetooth device's own mic switches it to Android's call-quality link, so the sound quality is lower."
+        // The fading comes from the headset's own noise suppression (Pixel Buds and JBL Clip+ alike, in
+        // every input mode), so it applies whatever the output is.
+        PairingWarning = PairingProblem is null && input is { IsBluetoothMic: true }
+            ? "Bluetooth mics use the headset's call mode: the sound quality is lower, and held notes or singing " +
+              "fade out because the headset treats steady sounds as noise. Talking works best. For singing, use the phone's mic."
             : null;
         UpdateLatencyEstimate();
         ToggleCommand.NotifyCanExecuteChanged();
