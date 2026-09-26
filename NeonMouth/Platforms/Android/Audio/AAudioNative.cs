@@ -21,8 +21,6 @@ static unsafe partial class AAudioNative
 
     public const int PerformanceModeLowLatency = 12;
 
-    public const int ClockMonotonic = 1;
-
     public const int UsageMedia = 1;
     public const int ContentTypeSpeech = 1;
     public const int InputPresetVoiceCommunication = 7;
@@ -58,7 +56,6 @@ static unsafe partial class AAudioNative
     [LibraryImport(Lib)] public static partial int AAudioStream_getXRunCount(nint stream);
     [LibraryImport(Lib)] public static partial int AAudioStream_getBufferSizeInFrames(nint stream);
     [LibraryImport(Lib)] public static partial int AAudioStream_getBufferCapacityInFrames(nint stream);
-    [LibraryImport(Lib)] public static partial int AAudioStream_getTimestamp(nint stream, int clockId, out long framePosition, out long timeNanoseconds);
     [LibraryImport(Lib)] public static partial int AAudioStream_setBufferSizeInFrames(nint stream, int numFrames);
     [LibraryImport(Lib)] public static partial int AAudioStream_getPerformanceMode(nint stream);
     [LibraryImport(Lib)] public static partial int AAudioStream_getSharingMode(nint stream);
