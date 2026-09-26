@@ -34,6 +34,15 @@ public static class VoiceEffectFactory
         VoiceEffectKind.Robot => new RobotEffect(sampleRate),
         _ => throw new ArgumentOutOfRangeException(nameof(kind)),
     };
+
+    /// <summary>Average delay an effect adds: half its pitch-shifter window (§4.2 estimate).</summary>
+    public static double AddedLatencyMs(VoiceEffectKind kind) => kind switch
+    {
+        VoiceEffectKind.Witch => WitchEffect.PitchWindowMs / 2,
+        VoiceEffectKind.Cartoon => CartoonEffect.PitchWindowMs / 2,
+        VoiceEffectKind.Monster => MonsterEffect.PitchWindowMs / 2,
+        _ => 0,
+    };
 }
 
 sealed class NaturalEffect : IVoiceEffect
@@ -46,7 +55,9 @@ sealed class NaturalEffect : IVoiceEffect
 /// <summary>High pitch with raspy distortion and a nasal band emphasis.</summary>
 sealed class WitchEffect(int sampleRate) : IVoiceEffect
 {
-    readonly PitchShifter _pitch = new(sampleRate, 30f);
+    public const float PitchWindowMs = 20f;
+
+    readonly PitchShifter _pitch = new(sampleRate, PitchWindowMs);
     readonly Biquad _nasal = Biquad.BandPass(sampleRate, 1800f, 1.2f);
     readonly Biquad _lowCut = Biquad.HighPass(sampleRate, 250f);
 
@@ -72,7 +83,9 @@ sealed class WitchEffect(int sampleRate) : IVoiceEffect
 /// <summary>Clean, strongly raised pitch.</summary>
 sealed class CartoonEffect(int sampleRate) : IVoiceEffect
 {
-    readonly PitchShifter _pitch = new(sampleRate, 25f);
+    public const float PitchWindowMs = 20f;
+
+    readonly PitchShifter _pitch = new(sampleRate, PitchWindowMs);
     readonly Biquad _lowCut = Biquad.HighPass(sampleRate, 180f);
 
     public VoiceEffectKind Kind => VoiceEffectKind.Cartoon;
@@ -90,7 +103,9 @@ sealed class CartoonEffect(int sampleRate) : IVoiceEffect
 /// <summary>Lowered pitch with a dark, saturated tone.</summary>
 sealed class MonsterEffect(int sampleRate) : IVoiceEffect
 {
-    readonly PitchShifter _pitch = new(sampleRate, 50f);
+    public const float PitchWindowMs = 30f;
+
+    readonly PitchShifter _pitch = new(sampleRate, PitchWindowMs);
     readonly Biquad _lowPass = Biquad.LowPass(sampleRate, 2200f);
     readonly Biquad _body = Biquad.BandPass(sampleRate, 140f, 0.8f);
 

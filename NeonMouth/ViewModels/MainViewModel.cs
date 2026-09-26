@@ -28,11 +28,11 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty] IReadOnlyList<string> _outputNames = [];
 
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(SelectedInputIndex), nameof(IsRecommendedSetup))]
+    [NotifyPropertyChangedFor(nameof(SelectedInputIndex))]
     AudioDevice? _selectedInput;
 
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(SelectedOutputIndex), nameof(IsRecommendedSetup))]
+    [NotifyPropertyChangedFor(nameof(SelectedOutputIndex))]
     AudioDevice? _selectedOutput;
 
     /// <summary>Why the selected mic + output can't be used together, or null (§1.1, §4.1).</summary>
@@ -49,6 +49,16 @@ public partial class MainViewModel : ObservableObject
 
     public bool HasPairingWarning => PairingWarning is not null;
 
+    /// <summary>Estimated mic-to-ear delay badge (§3.1, §4.2), or null without a usable pairing.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasLatencyEstimate))]
+    string? _latencyEstimate;
+
+    public bool HasLatencyEstimate => LatencyEstimate is not null;
+
+    /// <summary>Explains that the Bluetooth link, not the app, sets most of the delay.</summary>
+    [ObservableProperty] bool _latencyMostlyBluetooth;
+
     /// <summary>Howling protection just acted (§4.1 indicator).</summary>
     [ObservableProperty] bool _feedbackProtectionActive;
 
@@ -63,9 +73,6 @@ public partial class MainViewModel : ObservableObject
     public bool HasPendingDevice => PendingDevice is not null;
 
     public string PendingDeviceText => $"New output available: {PendingDevice?.Name}. Switch output to it?";
-
-    public bool IsRecommendedSetup =>
-        SelectedInput?.Kind == AudioDeviceKind.BuiltInMic && SelectedOutput?.Kind == AudioDeviceKind.WiredOutput;
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(StartStopText))]
@@ -190,13 +197,28 @@ public partial class MainViewModel : ObservableObject
         PairingWarning = PairingProblem is null && input is { IsBluetoothMic: true } && output is { IsBluetooth: true }
             ? "Using the Bluetooth device's own mic switches it to Android's call-quality link, so the sound quality is lower."
             : null;
+        UpdateLatencyEstimate();
         ToggleCommand.NotifyCanExecuteChanged();
+    }
+
+    void UpdateLatencyEstimate()
+    {
+        if (SelectedInput is not { } input || SelectedOutput is not { } output || HasPairingProblem)
+        {
+            LatencyEstimate = null;
+            LatencyMostlyBluetooth = false;
+            return;
+        }
+        var estimate = LatencyEstimator.Estimate(_session.LatencyProbe, input, output, SelectedEffect);
+        LatencyEstimate = $"Estimated delay: {estimate.MinMs}–{estimate.MaxMs} ms";
+        LatencyMostlyBluetooth = estimate.MostlyBluetooth;
     }
 
     partial void OnSelectedEffectChanged(VoiceEffectKind value)
     {
         OnPropertyChanged(nameof(SelectedEffectIndex));
         Preferences.Default.Set(SettingsKeys.Effect, value.ToString());
+        UpdateLatencyEstimate();
         _session?.Update(CurrentSettings);
     }
 

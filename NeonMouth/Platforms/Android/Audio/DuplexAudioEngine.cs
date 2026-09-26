@@ -19,6 +19,8 @@ namespace NeonMouth.Platforms.Android.Audio;
 sealed unsafe class DuplexAudioEngine : IDisposable
 {
     const int DrainBursts = 10;
+    /// <summary>Upper limit for output buffer growth (about 16 ms at a 96-frame burst).</summary>
+    const int MaxBufferBursts = 8;
     const long WriteTimeoutNanos = 100_000_000;
 
     nint _input;
@@ -178,6 +180,11 @@ sealed unsafe class DuplexAudioEngine : IDisposable
         int statsBursts = Math.Max(1, SampleRate / frames);
         float rawPeak = 0f;
         long framesRead = 0;
+        // Output buffer tuning: at most one step per ~100 ms, so a single glitch grows it by one burst.
+        int maxBuffer = Math.Min(AAudioStream_getBufferCapacityInFrames(output), frames * MaxBufferBursts);
+        int tuneCooldown = Math.Max(1, SampleRate / 10 / frames);
+        int nextTuneBurst = DrainBursts;
+        int xruns = 0;
 
         fixed (float* inBuf = _inBuffer)
         fixed (float* outBuf = _outBuffer)
@@ -206,6 +213,7 @@ sealed unsafe class DuplexAudioEngine : IDisposable
                     {
                         global::Android.Util.Log.Info("NeonMouth",
                             $"Input: peak={rawPeak:0.00000} frames={framesRead}/{statsBursts * frames}");
+                        LogLatency(input, output, processor.Effect);
                         rawPeak = 0f;
                         framesRead = 0;
                     }
@@ -235,8 +243,66 @@ sealed unsafe class DuplexAudioEngine : IDisposable
                 // Blocks until there is room for a burst, which paces the loop to the output clock.
                 int written = AAudioStream_write(output, outBuf, frames, WriteTimeoutNanos);
                 if (written < 0 && written != AAUDIO_ERROR_TIMEOUT) return written;
+
+                // Grow the output buffer one burst at a time while underruns continue (Android's
+                // recommended tuning); each step adds one burst of latency. Startup underruns are ignored.
+                if (burst == DrainBursts)
+                {
+                    xruns = AAudioStream_getXRunCount(output);
+                }
+                else if (burst >= nextTuneBurst)
+                {
+                    int now = AAudioStream_getXRunCount(output);
+                    if (now > xruns)
+                    {
+                        int size = AAudioStream_getBufferSizeInFrames(output);
+                        if (size + frames <= maxBuffer)
+                        {
+                            AAudioStream_setBufferSizeInFrames(output, size + frames);
+                            global::Android.Util.Log.Info("NeonMouth", $"Output underrun: buffer {size} -> {size + frames} frames");
+                        }
+                        nextTuneBurst = burst + tuneCooldown;
+                    }
+                    xruns = now;
+                }
             }
         }
         return 0;
     }
+
+    /// <summary>
+    /// Temporary diagnostic (Phase 4): measured latency from AAudio timestamps, how much input is
+    /// queued behind the read position, and xrun counts. Remove once the latency work is settled.
+    /// </summary>
+    void LogLatency(nint input, nint output, VoiceEffectKind effect)
+    {
+        double inMs = InputLatencyMs(input, SampleRate);
+        double outMs = OutputLatencyMs(output, SampleRate);
+        double effectMs = VoiceEffectFactory.AddedLatencyMs(effect);
+        long queued = AAudioStream_getFramesWritten(input) - AAudioStream_getFramesRead(input);
+        global::Android.Util.Log.Info("NeonMouth",
+            $"Latency: in={inMs:0.0} out={outMs:0.0} effect={effectMs:0.0} total={inMs + outMs + effectMs:0.0} ms " +
+            $"inQueue={queued} frames ({queued * 1000.0 / SampleRate:0.0} ms) " +
+            $"xruns in={AAudioStream_getXRunCount(input)} out={AAudioStream_getXRunCount(output)} " +
+            $"outBuffer={AAudioStream_getBufferSizeInFrames(output)} frames");
+    }
+
+    /// <summary>Time since the frame just read reached the mic; includes any input queued behind it.</summary>
+    static double InputLatencyMs(nint stream, int rate)
+    {
+        if (AAudioStream_getTimestamp(stream, ClockMonotonic, out long hwFrame, out long hwTimeNs) < 0) return double.NaN;
+        double capturedAtNs = hwTimeNs + (AAudioStream_getFramesRead(stream) - hwFrame) * 1e9 / rate;
+        return (NowNanos() - capturedAtNs) / 1e6;
+    }
+
+    /// <summary>Time until the next frame written reaches the device (Oboe's calculateLatencyMillis).</summary>
+    static double OutputLatencyMs(nint stream, int rate)
+    {
+        if (AAudioStream_getTimestamp(stream, ClockMonotonic, out long hwFrame, out long hwTimeNs) < 0) return double.NaN;
+        double presentedAtNs = hwTimeNs + (AAudioStream_getFramesWritten(stream) - hwFrame) * 1e9 / rate;
+        return (presentedAtNs - NowNanos()) / 1e6;
+    }
+
+    // Stopwatch uses CLOCK_MONOTONIC on Android, the same clock as the AAudio timestamps.
+    static long NowNanos() => (long)(System.Diagnostics.Stopwatch.GetTimestamp() * (1e9 / System.Diagnostics.Stopwatch.Frequency));
 }

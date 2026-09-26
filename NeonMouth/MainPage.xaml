@@ -30,8 +30,13 @@
                                 SelectedIndexChanged="OnOutputPickerChanged" />
                         <Label Text="Auto-selected" FontSize="12" TextColor="{StaticResource Gray500}"
                                IsVisible="{Binding OutputAutoSelected}" />
-                        <Label Text="✓ Recommended: phone mic + wired headphones (lowest latency)."
-                               FontSize="12" TextColor="{AppThemeBinding Light={StaticResource AccentOnLight}, Dark={StaticResource Accent}}" IsVisible="{Binding IsRecommendedSetup}" />
+                        <!-- Latency badge (§3.1, §4.2): a static estimate, shown before Start. -->
+                        <Border Padding="10,6" StrokeShape="RoundRectangle 14" HorizontalOptions="Start"
+                                IsVisible="{Binding HasLatencyEstimate}">
+                            <Label Text="{Binding LatencyEstimate}" FontSize="13" FontAttributes="Bold" />
+                        </Border>
+                        <Label Text="Most of this delay is the Bluetooth link itself. The app can't shorten it."
+                               FontSize="12" TextColor="{StaticResource Gray500}" IsVisible="{Binding LatencyMostlyBluetooth}" />
                         <Button Text="Rescan" Command="{Binding RescanCommand}" HorizontalOptions="Start" />
                     </VerticalStackLayout>
                 </Border>

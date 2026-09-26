@@ -29,10 +29,10 @@ public enum AudioDeviceKind
 /// <see cref="NeedsActivation"/> marks a Bluetooth speaker that is connected but not the OS's active
 /// audio device (e.g. after wired headphones took over); it can't be opened until reactivated.
 /// <see cref="BluetoothAddress"/> identifies the physical device, so a headset's mic and its speaker
-/// can be matched.
+/// can be matched. <see cref="IsUsb"/> marks USB-C headsets, whose converter (and latency) is in the accessory.
 /// </summary>
 public sealed record AudioDevice(int Id, string Key, string Name, AudioDeviceKind Kind, bool NeedsActivation = false,
-    string? BluetoothAddress = null)
+    string? BluetoothAddress = null, bool IsUsb = false)
 {
     public bool IsBluetooth => Kind == AudioDeviceKind.BluetoothSpeaker;
     public bool IsBluetoothMic => Kind == AudioDeviceKind.BluetoothMic;
@@ -63,6 +63,9 @@ public interface IAudioSession
 
     /// <summary>True shortly after howling protection acted (§4.1 protection indicator).</summary>
     bool IsFeedbackProtectionActive { get; }
+
+    /// <summary>The phone's reported audio capabilities, for the latency estimate (§4.2.1).</summary>
+    LatencyProbe LatencyProbe { get; }
 
     Task<bool> RequestPermissionsAsync();
 

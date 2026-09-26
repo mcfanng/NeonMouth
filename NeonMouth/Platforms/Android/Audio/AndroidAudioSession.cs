@@ -1,6 +1,7 @@
 using System.Runtime.Versioning;
 using Android.Bluetooth;
 using Android.Content;
+using PackageManager = Android.Content.PM.PackageManager;
 using Android.Media;
 using AndroidX.Core.Content;
 using NeonMouth.Audio;
@@ -53,6 +54,20 @@ sealed class AndroidAudioSession : IAudioSession
         _engine.StreamError += OnStreamError;
     }
 
+    public LatencyProbe LatencyProbe => field ??= ReadLatencyProbe();
+
+    LatencyProbe ReadLatencyProbe()
+    {
+        int.TryParse(_audioManager.GetProperty(AudioManager.PropertyOutputSampleRate), out int rate);
+        int.TryParse(_audioManager.GetProperty(AudioManager.PropertyOutputFramesPerBuffer), out int frames);
+        var pm = AApp.Context.PackageManager;
+        var probe = new LatencyProbe(rate, frames,
+            pm?.HasSystemFeature(PackageManager.FeatureAudioLowLatency) == true,
+            pm?.HasSystemFeature(PackageManager.FeatureAudioPro) == true);
+        global::Android.Util.Log.Info(Tag, $"Latency probe: {probe}");
+        return probe;
+    }
+
     /// <summary>The output the session is playing to, for the notification and FGS type.</summary>
     internal AudioDevice? CurrentOutput => _output;
 
@@ -66,7 +81,8 @@ sealed class AndroidAudioSession : IAudioSession
         if (devices.FirstOrDefault(d => d.Type == AudioDeviceType.BuiltinMic) is { } builtIn)
             inputs.Add(new AudioDevice(builtIn.Id, "builtin_mic", "Phone microphone", AudioDeviceKind.BuiltInMic));
         foreach (var d in devices.Where(d => WiredInputTypes.Contains(d.Type)))
-            inputs.Add(new AudioDevice(d.Id, $"wired_mic:{d.Type}", $"Wired microphone ({d.ProductName})", AudioDeviceKind.WiredMic));
+            inputs.Add(new AudioDevice(d.Id, $"wired_mic:{d.Type}", $"Wired microphone ({d.ProductName})", AudioDeviceKind.WiredMic,
+                IsUsb: d.Type == AudioDeviceType.UsbHeadset));
         // Wireless clip-on mic receivers usually enumerate as a generic USB device.
         foreach (var d in devices.Where(d => UsbInputTypes.Contains(d.Type)))
             inputs.Add(new AudioDevice(d.Id, $"usb_mic:{d.ProductName}", $"USB microphone ({d.ProductName})", AudioDeviceKind.UsbMic));
@@ -78,7 +94,8 @@ sealed class AndroidAudioSession : IAudioSession
         foreach (var d in _audioManager.GetDevices(GetDevicesTargets.Outputs) ?? [])
         {
             if (WiredOutputTypes.Contains(d.Type))
-                outputs.Add(new AudioDevice(d.Id, $"wired_out:{d.Type}", $"Wired headphones ({d.ProductName})", AudioDeviceKind.WiredOutput));
+                outputs.Add(new AudioDevice(d.Id, $"wired_out:{d.Type}", $"Wired headphones ({d.ProductName})", AudioDeviceKind.WiredOutput,
+                    IsUsb: d.Type == AudioDeviceType.UsbHeadset));
             else if (d.Type == AudioDeviceType.BluetoothA2dp)
             {
                 string key = string.IsNullOrEmpty(d.Address) ? d.ProductName ?? "" : d.Address;
