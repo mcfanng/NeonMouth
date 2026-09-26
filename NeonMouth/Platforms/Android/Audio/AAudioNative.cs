@@ -9,6 +9,7 @@ static unsafe partial class AAudioNative
 
     public const int AAUDIO_OK = 0;
     public const int AAUDIO_ERROR_DISCONNECTED = -899;
+    public const int AAUDIO_ERROR_TIMEOUT = -885;
 
     public const int DirectionOutput = 0;
     public const int DirectionInput = 1;
@@ -25,9 +26,6 @@ static unsafe partial class AAudioNative
     public const int InputPresetVoiceCommunication = 7;
     public const int InputPresetVoicePerformance = 10;
 
-    public const int CallbackResultContinue = 0;
-    public const int CallbackResultStop = 1;
-
     [LibraryImport(Lib)] public static partial int AAudio_createStreamBuilder(out nint builder);
     [LibraryImport(Lib)] public static partial int AAudioStreamBuilder_openStream(nint builder, out nint stream);
     [LibraryImport(Lib)] public static partial int AAudioStreamBuilder_delete(nint builder);
@@ -43,18 +41,11 @@ static unsafe partial class AAudioNative
     [LibraryImport(Lib)] public static partial void AAudioStreamBuilder_setContentType(nint builder, int contentType);
     [LibraryImport(Lib)] public static partial void AAudioStreamBuilder_setInputPreset(nint builder, int preset);
 
-    [LibraryImport(Lib)]
-    public static partial void AAudioStreamBuilder_setDataCallback(
-        nint builder, delegate* unmanaged<nint, nint, nint, int, int> callback, nint userData);
-
-    [LibraryImport(Lib)]
-    public static partial void AAudioStreamBuilder_setErrorCallback(
-        nint builder, delegate* unmanaged<nint, nint, int, void> callback, nint userData);
-
     [LibraryImport(Lib)] public static partial int AAudioStream_requestStart(nint stream);
     [LibraryImport(Lib)] public static partial int AAudioStream_requestStop(nint stream);
     [LibraryImport(Lib)] public static partial int AAudioStream_close(nint stream);
     [LibraryImport(Lib)] public static partial int AAudioStream_read(nint stream, float* buffer, int numFrames, long timeoutNanoseconds);
+    [LibraryImport(Lib)] public static partial int AAudioStream_write(nint stream, float* buffer, int numFrames, long timeoutNanoseconds);
     [LibraryImport(Lib)] public static partial int AAudioStream_getSampleRate(nint stream);
     [LibraryImport(Lib)] public static partial int AAudioStream_getDeviceId(nint stream);
     [LibraryImport(Lib)] public static partial int AAudioStream_getChannelCount(nint stream);
